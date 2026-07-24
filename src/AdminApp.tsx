@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { FormEvent as ReactFormEvent } from "react";
+import type { SubmitEvent } from "react";
 import logo from "./assets/orca-logo.png";
+import { API_BASE_URL } from "./apiConfig";
 import "./App.css";
 import "./AdminApp.css";
 
@@ -74,7 +75,7 @@ function AdminApp() {
   const [selected, setSelected] = useState<SubmissionDetail | null>(null);
 
   useEffect(() => {
-    fetch("/api/admin/session")
+    fetch(`${API_BASE_URL}/api/admin/session`, { credentials: "include" })
       .then((res) => res.json())
       .then((data) => setAuthStatus(data.authenticated ? "authenticated" : "unauthenticated"))
       .catch(() => setAuthStatus("unauthenticated"));
@@ -85,7 +86,9 @@ function AdminApp() {
   }, [authStatus]);
 
   async function loadSubmissions() {
-    const res = await fetch("/api/admin/submissions");
+    const res = await fetch(`${API_BASE_URL}/api/admin/submissions`, {
+      credentials: "include",
+    });
 
     if (res.status === 401) {
       setAuthStatus("unauthenticated");
@@ -95,7 +98,7 @@ function AdminApp() {
     setSubmissions(await res.json());
   }
 
-  async function handleLogin(event: ReactFormEvent<HTMLFormElement>) {
+  async function handleLogin(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsLoggingIn(true);
     setLoginError(null);
@@ -103,8 +106,9 @@ function AdminApp() {
     const formData = new FormData(event.currentTarget);
 
     try {
-      const res = await fetch("/api/admin/login", {
+      const res = await fetch(`${API_BASE_URL}/api/admin/login`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: formData.get("username"),
@@ -127,13 +131,18 @@ function AdminApp() {
   }
 
   async function handleLogout() {
-    await fetch("/api/admin/logout", { method: "POST" });
+    await fetch(`${API_BASE_URL}/api/admin/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
     setSubmissions([]);
     setAuthStatus("unauthenticated");
   }
 
   async function openDetail(id: number) {
-    const res = await fetch(`/api/admin/submissions/${id}`);
+    const res = await fetch(`${API_BASE_URL}/api/admin/submissions/${id}`, {
+      credentials: "include",
+    });
     if (!res.ok) return;
     setSelected(await res.json());
   }
@@ -141,7 +150,10 @@ function AdminApp() {
   async function removeSubmission(id: number) {
     if (!confirm("Remove this submission permanently? This cannot be undone.")) return;
 
-    const res = await fetch(`/api/admin/submissions/${id}`, { method: "DELETE" });
+    const res = await fetch(`${API_BASE_URL}/api/admin/submissions/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
     if (res.ok) loadSubmissions();
   }
 
@@ -283,7 +295,7 @@ function AdminApp() {
                 {selected.driverLicensePath && (
                   <a
                     className="file-link"
-                    href={`/api/admin/uploads/${selected.driverLicensePath}`}
+                    href={`${API_BASE_URL}/api/admin/uploads/${selected.driverLicensePath}`}
                     target="_blank"
                     rel="noopener noreferrer"
                   >
@@ -293,7 +305,7 @@ function AdminApp() {
                 {selected.resumePath && (
                   <a
                     className="file-link"
-                    href={`/api/admin/uploads/${selected.resumePath}`}
+                    href={`${API_BASE_URL}/api/admin/uploads/${selected.resumePath}`}
                     target="_blank"
                     rel="noopener noreferrer"
                   >

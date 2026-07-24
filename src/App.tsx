@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ChangeEvent, SubmitEvent } from "react";
 import logo from "./assets/orca-logo.png";
+import { API_BASE_URL } from "./apiConfig";
 import "./App.css";
 
 type Page = "welcome" | "employee-info" | "bank-info" | "additional-info";
@@ -91,8 +92,6 @@ function formatSSN(value: string): string {
 function formatDigits(value: string, maxLength: number): string {
   return value.replace(/\D/g, "").slice(0, maxLength);
 }
-
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
 function formatPhone(value: string): string {
   const numbers = value.replace(/\D/g, "").slice(0, 10);

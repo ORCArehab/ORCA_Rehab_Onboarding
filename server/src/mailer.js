@@ -30,7 +30,7 @@ async function notifyNewSubmission({ firstName, lastName }) {
   }
 
   const transporter = createTransport();
-  const dashboardUrl = process.env.ADMIN_DASHBOARD_URL || "http://localhost:4000/admin";
+  const dashboardUrl = process.env.ADMIN_DASHBOARD_URL || "http://localhost:5173/admin";
 
   await transporter.sendMail({
     from: process.env.NOTIFY_EMAIL_FROM || process.env.SMTP_USER,

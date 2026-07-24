@@ -19,8 +19,16 @@ const { notifyNewSubmission } = require("./mailer");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const UPLOADS_DIR = path.join(__dirname, "..", "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+// Behind a reverse proxy (Render, Railway, etc.), the app sees plain HTTP
+// internally even though the real request was HTTPS — trust proxy so
+// req.secure (and therefore secure cookies) reflect the original request.
+if (IS_PRODUCTION) {
+  app.set("trust proxy", 1);
+}
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173", credentials: true }));
 app.use(express.json());
@@ -29,7 +37,16 @@ app.use(
     secret: process.env.SESSION_SECRET || "dev-only-insecure-secret",
     resave: false,
     saveUninitialized: false,
-    cookie: { httpOnly: true, maxAge: 1000 * 60 * 60 * 8 },
+    cookie: {
+      httpOnly: true,
+      maxAge: 1000 * 60 * 60 * 8,
+      // Cross-origin cookies require SameSite=None + Secure, which in turn
+      // requires HTTPS — only viable in production. In local dev, the
+      // frontend proxies /api requests through Vite so everything is
+      // same-origin and a plain cookie works fine.
+      sameSite: IS_PRODUCTION ? "none" : "lax",
+      secure: IS_PRODUCTION,
+    },
   }),
 );
 
