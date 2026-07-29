@@ -123,9 +123,10 @@ function toQuickBooksEmployee(employee) {
 }
 
 // --- Onboarding submission ---
-// Local storage is the source of truth: we always persist the full
-// submission (encrypted at rest) regardless of whether QuickBooks succeeds,
-// since QuickBooks is an external, best-effort sync, not the record of truth.
+// Submissions are only ever saved locally here — QuickBooks is never
+// touched automatically. An HR/Payroll admin has to review the submission
+// and explicitly approve it (see POST /api/admin/submissions/:id/approve)
+// before an employee record is created in QuickBooks.
 app.post(
   "/api/onboarding/submit",
   upload.fields([
@@ -133,12 +134,13 @@ app.post(
     { name: "resume", maxCount: 1 },
   ]),
   async (req, res) => {
-    let employee, bank, additional;
+    let employee, bank, additional, policy;
 
     try {
       employee = JSON.parse(req.body.employee);
       bank = JSON.parse(req.body.bank);
       additional = JSON.parse(req.body.additional);
+      policy = JSON.parse(req.body.policy);
     } catch {
       return res.status(400).json({ error: "Malformed submission data." });
     }
@@ -149,6 +151,12 @@ app.post(
         .json({ error: "Employee first and last name are required." });
     }
 
+    if (!policy?.fullName || !policy?.signedAt) {
+      return res
+        .status(400)
+        .json({ error: "The policy agreement must be signed before submitting." });
+    }
+
     const driverLicenseFile = req.files?.driverLicensePhoto?.[0];
     const resumeFile = req.files?.resume?.[0];
 
@@ -156,22 +164,10 @@ app.post(
       employee,
       bank,
       additional,
+      policy,
       driverLicensePath: driverLicenseFile?.filename,
       resumePath: resumeFile?.filename,
     });
-
-    let quickbooksEmployeeId = null;
-
-    try {
-      const qboEmployee = await createEmployee(toQuickBooksEmployee(employee));
-      quickbooksEmployeeId = qboEmployee.Id;
-      db.markQuickBooksSynced(submissionId, quickbooksEmployeeId);
-    } catch (error) {
-      console.error(
-        `QuickBooks sync failed for submission ${submissionId} (stored locally, can retry manually):`,
-        error,
-      );
-    }
 
     try {
       await notifyNewSubmission(employee);
@@ -179,7 +175,7 @@ app.post(
       console.error("Failed to send notification email:", error);
     }
 
-    res.json({ success: true, id: submissionId, quickbooksEmployeeId });
+    res.json({ success: true, id: submissionId });
   },
 );
 
@@ -218,6 +214,27 @@ app.get("/api/admin/submissions/:id", requireAuth, (req, res) => {
   const submission = db.getSubmission(req.params.id);
   if (!submission) return res.status(404).json({ error: "Not found." });
   res.json(submission);
+});
+
+app.post("/api/admin/submissions/:id/approve", requireAuth, async (req, res) => {
+  const submission = db.getSubmission(req.params.id);
+  if (!submission) return res.status(404).json({ error: "Not found." });
+
+  if (submission.quickbooksSynced) {
+    return res.json({
+      success: true,
+      quickbooksEmployeeId: submission.quickbooksEmployeeId,
+    });
+  }
+
+  try {
+    const qboEmployee = await createEmployee(toQuickBooksEmployee(submission.employee));
+    db.markQuickBooksSynced(submission.id, qboEmployee.Id);
+    res.json({ success: true, quickbooksEmployeeId: qboEmployee.Id });
+  } catch (error) {
+    console.error(`Failed to approve submission ${submission.id} into QuickBooks:`, error);
+    res.status(502).json({ error: "Failed to create employee in QuickBooks." });
+  }
 });
 
 app.delete("/api/admin/submissions/:id", requireAuth, (req, res) => {

@@ -52,6 +52,10 @@ interface SubmissionDetail {
     dependentsAmount: string;
     extraWithholding: string;
   };
+  policy?: {
+    fullName: string;
+    signedAt: string;
+  };
 }
 
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
@@ -73,6 +77,7 @@ function AdminApp() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [submissions, setSubmissions] = useState<SubmissionSummary[]>([]);
   const [selected, setSelected] = useState<SubmissionDetail | null>(null);
+  const [approvingId, setApprovingId] = useState<number | null>(null);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/admin/session`, { credentials: "include" })
@@ -145,6 +150,28 @@ function AdminApp() {
     });
     if (!res.ok) return;
     setSelected(await res.json());
+  }
+
+  async function approveSubmission(id: number) {
+    setApprovingId(id);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/submissions/${id}/approve`, {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        alert(body?.error ?? "Failed to approve this submission.");
+        return;
+      }
+
+      await loadSubmissions();
+      if (selected?.id === id) await openDetail(id);
+    } finally {
+      setApprovingId(null);
+    }
   }
 
   async function removeSubmission(id: number) {
@@ -238,13 +265,23 @@ function AdminApp() {
                     <span
                       className={`badge ${submission.quickbooks_synced ? "synced" : "pending"}`}
                     >
-                      {submission.quickbooks_synced ? "Synced" : "Pending manual entry"}
+                      {submission.quickbooks_synced ? "Synced" : "Awaiting approval"}
                     </span>
                   </td>
                   <td className="row-actions">
                     <button type="button" onClick={() => openDetail(submission.id)}>
                       View
                     </button>
+                    {!submission.quickbooks_synced && (
+                      <button
+                        type="button"
+                        className="approve"
+                        disabled={approvingId === submission.id}
+                        onClick={() => approveSubmission(submission.id)}
+                      >
+                        {approvingId === submission.id ? "Approving…" : "Approve"}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="danger"
@@ -278,8 +315,21 @@ function AdminApp() {
               <p className="admin-sync-status">
                 {selected.quickbooksSynced
                   ? `Synced to QuickBooks (Employee ID ${selected.quickbooksEmployeeId})`
-                  : "Not yet synced to QuickBooks — needs manual review"}
+                  : "Awaiting approval — not yet created in QuickBooks"}
               </p>
+              {!selected.quickbooksSynced && (
+                <button
+                  type="button"
+                  className="primary-button admin-approve-button"
+                  disabled={approvingId === selected.id}
+                  onClick={() => approveSubmission(selected.id)}
+                >
+                  {approvingId === selected.id
+                    ? "Approving…"
+                    : "Approve & create in QuickBooks"}
+                  <span aria-hidden="true">→</span>
+                </button>
+              )}
             </div>
 
             <div className="detail-section">
@@ -391,6 +441,24 @@ function AdminApp() {
                 <DetailField
                   label="Extra withholding"
                   value={selected.additional?.extraWithholding}
+                />
+              </div>
+            </div>
+
+            <div className="detail-section">
+              <h2>Policy agreement</h2>
+              <div className="detail-grid">
+                <DetailField label="Signed by" value={selected.policy?.fullName} />
+                <DetailField
+                  label="Signed at"
+                  value={
+                    selected.policy?.signedAt
+                      ? new Date(selected.policy.signedAt).toLocaleString(undefined, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : undefined
+                  }
                 />
               </div>
             </div>

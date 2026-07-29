@@ -21,8 +21,8 @@ db.exec(`
   )
 `);
 
-function createSubmission({ employee, bank, additional, driverLicensePath, resumePath }) {
-  const encryptedData = encrypt(JSON.stringify({ employee, bank, additional }));
+function createSubmission({ employee, bank, additional, policy, driverLicensePath, resumePath }) {
+  const encryptedData = encrypt(JSON.stringify({ employee, bank, additional, policy }));
 
   const result = db
     .prepare(

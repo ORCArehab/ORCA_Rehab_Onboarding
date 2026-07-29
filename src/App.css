@@ -396,6 +396,68 @@ input:focus-visible {
   object-fit: cover;
 }
 
+.policy-download-link {
+  justify-self: start;
+  color: var(--blue);
+  font-weight: 700;
+  font-size: 0.88rem;
+  text-decoration: none;
+}
+
+.policy-download-link:hover {
+  text-decoration: underline;
+}
+
+.policy-scroll-box {
+  height: 380px;
+  overflow-y: auto;
+  padding: 24px 28px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fbfcfd;
+}
+
+.policy-text {
+  color: var(--navy);
+  font-size: 0.92rem;
+  line-height: 1.7;
+  text-align: left;
+}
+
+.policy-text h2 {
+  font-size: 1.3rem;
+  margin: 0 0 4px;
+}
+
+.policy-text h3 {
+  font-family: "DM Sans", sans-serif;
+  font-size: 1rem;
+  color: var(--text-muted);
+  margin: 0 0 20px;
+}
+
+.policy-text h4 {
+  margin: 26px 0 10px;
+  color: var(--navy);
+  font-size: 0.95rem;
+}
+
+.policy-text p {
+  margin: 0 0 14px;
+}
+
+.policy-text ul {
+  margin: 0 0 14px;
+  padding-left: 22px;
+}
+
+.policy-scroll-status {
+  margin: 0;
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--blue);
+}
+
 .form-field small {
   color: var(--text-muted);
   font-size: 0.76rem;

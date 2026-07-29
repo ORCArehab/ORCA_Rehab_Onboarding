@@ -1,10 +1,16 @@
 import { useEffect, useState } from "react";
-import type { ChangeEvent, SubmitEvent } from "react";
+import type { ChangeEvent, SubmitEvent, UIEvent } from "react";
 import logo from "./assets/orca-logo.png";
+import policyPdf from "./assets/PolicyAgreement.pdf";
 import { API_BASE_URL } from "./apiConfig";
 import "./App.css";
 
-type Page = "welcome" | "employee-info" | "bank-info" | "additional-info";
+type Page =
+  | "welcome"
+  | "employee-info"
+  | "bank-info"
+  | "additional-info"
+  | "policy-agreement";
 
 interface EmployeeForm {
   firstName: string;
@@ -78,6 +84,14 @@ const initialAdditionalForm: AdditionalForm = {
   extraWithholding: "",
 };
 
+interface PolicyForm {
+  fullName: string;
+}
+
+const initialPolicyForm: PolicyForm = {
+  fullName: "",
+};
+
 function formatSSN(value: string): string {
   const numbers = value.replace(/\D/g, "").slice(0, 9);
 
@@ -109,7 +123,8 @@ const DEV_PAGES: { label: string; page: Page; submitted?: boolean }[] = [
   { label: "Employee info", page: "employee-info" },
   { label: "Bank info", page: "bank-info" },
   { label: "Additional info", page: "additional-info" },
-  { label: "Success", page: "additional-info", submitted: true },
+  { label: "Policy agreement", page: "policy-agreement" },
+  { label: "Success", page: "policy-agreement", submitted: true },
 ];
 
 function DevNav({
@@ -211,6 +226,8 @@ function App() {
   const [additionalForm, setAdditionalForm] = useState<AdditionalForm>(
     initialAdditionalForm,
   );
+  const [policyForm, setPolicyForm] = useState<PolicyForm>(initialPolicyForm);
+  const [hasReadPolicy, setHasReadPolicy] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [licensePreview, setLicensePreview] = useState<string | null>(null);
@@ -395,9 +412,7 @@ function App() {
     setPage("additional-info");
   };
 
-  const handleAdditionalSubmit = async (
-    event: SubmitEvent<HTMLFormElement>,
-  ) => {
+  const handleAdditionalSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const emergencyPhoneNumbers = additionalForm.emergencyContactPhone.replace(
@@ -420,6 +435,35 @@ function App() {
       return;
     }
 
+    setPage("policy-agreement");
+  };
+
+  const handlePolicyScroll = (event: UIEvent<HTMLDivElement>) => {
+    const target = event.currentTarget;
+
+    if (target.scrollHeight - target.scrollTop - target.clientHeight < 16) {
+      setHasReadPolicy(true);
+    }
+  };
+
+  const handlePolicySubmit = async (event: SubmitEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!hasReadPolicy) {
+      alert("Please scroll through the entire policy before signing.");
+      return;
+    }
+
+    const expectedName = `${form.firstName} ${form.lastName}`.trim().toLowerCase();
+    const typedName = policyForm.fullName.trim().toLowerCase();
+
+    if (typedName !== expectedName) {
+      alert(
+        "Please type your full legal name exactly as entered in Step 1 to sign.",
+      );
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -439,6 +483,13 @@ function App() {
       );
       formData.append("bank", JSON.stringify(bankForm));
       formData.append("additional", JSON.stringify(additionalForm));
+      formData.append(
+        "policy",
+        JSON.stringify({
+          fullName: policyForm.fullName.trim(),
+          signedAt: new Date().toISOString(),
+        }),
+      );
 
       if (form.driverLicensePhoto) {
         formData.append("driverLicensePhoto", form.driverLicensePhoto);
@@ -534,8 +585,8 @@ function App() {
           <h1>Thank you, {form.firstName}.</h1>
           <p>
             Your employee, banking, and additional information has been
-            submitted. Our team will follow up with the next steps of
-            onboarding.
+            submitted, and your policy agreement has been signed. Our team
+            will follow up with the next steps of onboarding.
           </p>
         </section>
       </main>
@@ -559,7 +610,7 @@ function App() {
             <img className="form-logo" src={logo} alt="ORCA Rehab" />
 
             <div>
-              <p className="eyebrow">STEP 2 OF 3</p>
+              <p className="eyebrow">STEP 2 OF 4</p>
               <h1>Direct Deposit Information</h1>
               <p>
                 Please enter your bank account details for direct deposit
@@ -569,7 +620,7 @@ function App() {
           </header>
 
           <div className="progress-track" aria-label="Onboarding progress">
-            <div className="progress-value" style={{ width: "66%" }} />
+            <div className="progress-value" style={{ width: "50%" }} />
           </div>
 
           <form className="employee-form" onSubmit={handleBankSubmit}>
@@ -664,7 +715,7 @@ function App() {
             <img className="form-logo" src={logo} alt="ORCA Rehab" />
 
             <div>
-              <p className="eyebrow">STEP 3 OF 3</p>
+              <p className="eyebrow">STEP 3 OF 4</p>
               <h1>Additional Information</h1>
               <p>
                 A few more required details: emergency contact, work
@@ -674,7 +725,7 @@ function App() {
           </header>
 
           <div className="progress-track" aria-label="Onboarding progress">
-            <div className="progress-value" style={{ width: "100%" }} />
+            <div className="progress-value" style={{ width: "75%" }} />
           </div>
 
           <form className="employee-form" onSubmit={handleAdditionalSubmit}>
@@ -821,12 +872,453 @@ function App() {
             <div className="form-footer">
               <p>Fields marked required must be completed.</p>
 
+              <button className="primary-button" type="submit">
+                Continue
+                <span aria-hidden="true">→</span>
+              </button>
+            </div>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
+  if (page === "policy-agreement") {
+    return (
+      <main className="app-shell">
+        <DevNav onNavigate={handleDevNavigate} />
+        <section className="form-card">
+          <button
+            className="back-button"
+            type="button"
+            onClick={() => setPage("additional-info")}
+          >
+            ← Back
+          </button>
+
+          <header className="form-header">
+            <img className="form-logo" src={logo} alt="ORCA Rehab" />
+
+            <div>
+              <p className="eyebrow">STEP 4 OF 4</p>
+              <h1>Policy Agreement</h1>
+              <p>
+                Please read the full policy below before signing. You must
+                scroll to the end to continue.
+              </p>
+            </div>
+          </header>
+
+          <div className="progress-track" aria-label="Onboarding progress">
+            <div className="progress-value" style={{ width: "100%" }} />
+          </div>
+
+          <form className="employee-form" onSubmit={handlePolicySubmit}>
+            <a
+              className="policy-download-link"
+              href={policyPdf}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Download a copy (PDF)
+            </a>
+
+            <div className="policy-scroll-box" onScroll={handlePolicyScroll}>
+              <div className="policy-text">
+                <h2>ORCA Rehab, Inc.</h2>
+                <h3>Holiday, Paid Time-Off, and Paid Sick Leave Policy</h3>
+
+                <p>
+                  <strong>Approved:</strong> June 18, 2026
+                  <br />
+                  <strong>Approved by:</strong> ORCA Management
+                  <br />
+                  <strong>Effective date:</strong> June 18, 2026
+                  <br />
+                  <strong>Supersedes:</strong> Any prior holiday, paid time
+                  off, or paid sick leave policy
+                </p>
+
+                <h4>Purpose</h4>
+                <p>
+                  ORCA Rehab, Inc. recognizes the importance of providing
+                  employees and providers with time to observe holidays,
+                  spend time with family, attend to personal needs, and
+                  maintain work-life balance.
+                </p>
+                <p>
+                  As an inpatient rehabilitation practice, ORCA Rehab also has
+                  an ongoing responsibility to maintain continuity of patient
+                  care. Patients remain in hospitals, skilled nursing
+                  facilities, and other care settings during holidays and
+                  continue to require timely evaluation, treatment,
+                  coordination, and provider oversight. Because hospitals and
+                  patient care facilities do not close on holidays, ORCA
+                  Rehab must maintain scheduling flexibility to support
+                  patient care, meet facility expectations, and ensure
+                  continuity of operations.
+                </p>
+                <p>
+                  This policy outlines holiday observance, paid time off, and
+                  paid sick leave guidelines for eligible office staff,
+                  hospital-based providers, non-hospital providers, and other
+                  eligible employees.
+                </p>
+
+                <h4>I. Recognized ORCA Holidays</h4>
+                <p>ORCA Rehab recognizes the following six paid holidays:</p>
+                <ul>
+                  <li>New Year's Day</li>
+                  <li>Memorial Day</li>
+                  <li>Independence Day</li>
+                  <li>Labor Day</li>
+                  <li>Thanksgiving Day</li>
+                  <li>Christmas Day</li>
+                </ul>
+                <p>
+                  ORCA Rehab reserves the right to modify recognized
+                  holidays, scheduling practices, coverage assignments, or
+                  holiday procedures based on operational needs, patient care
+                  needs, facility requirements, and applicable law.
+                </p>
+
+                <h4>II. Office Staff Holiday Policy</h4>
+                <p>
+                  Eligible full-time office staff are entitled to six (6)
+                  paid holidays per calendar year from the recognized holiday
+                  list above.
+                </p>
+                <p>
+                  Christmas Eve, New Year's Eve, and the Friday after
+                  Thanksgiving are not additional paid holidays. However,
+                  office staff may be permitted to work remotely from home on
+                  those days, subject to operational needs and management
+                  approval.
+                </p>
+                <p>
+                  If a recognized ORCA holiday falls on a Saturday or Sunday,
+                  ORCA Rehab may designate an observed holiday for eligible
+                  full-time office staff, generally on the preceding Friday
+                  or following Monday, subject to operational needs and
+                  management approval.
+                </p>
+                <p>
+                  Employees are not eligible to receive duplicate holiday
+                  benefits for the same recognized ORCA holiday unless
+                  specifically approved by ORCA management.
+                </p>
+
+                <h4>III. Hospital-Based Provider Holiday Policy</h4>
+                <p>
+                  Because patient care responsibilities vary by facility,
+                  holiday scheduling for hospital-based providers is
+                  determined in coordination with each hospital's
+                  operational requirements, patient care needs, provider
+                  availability, and ORCA leadership direction.
+                </p>
+                <p>
+                  <strong>
+                    A. Providers Assigned to Providence St. Jude, St. Joseph,
+                    and St. Mary
+                  </strong>
+                  <br />
+                  Providers assigned to Providence St. Jude, St. Joseph, and
+                  St. Mary are expected to rotate holiday coverage with other
+                  providers assigned to the facility. Coverage schedules will
+                  be arranged by ORCA leadership in a professional and fair
+                  manner to maintain uninterrupted patient care.
+                </p>
+                <p>
+                  If a provider is assigned and provides clinical coverage on
+                  a recognized ORCA holiday, ORCA Rehab may grant one (1)
+                  equivalent PTO day, subject to scheduling approval, patient
+                  care needs, facility coverage needs, and operational
+                  requirements.
+                </p>
+                <p>
+                  In addition to the six recognized ORCA holidays listed
+                  above, providers who are assigned and provide clinical
+                  coverage on Christmas Eve or New Year's Eve may be granted
+                  one (1) equivalent PTO day, subject to ORCA Rehab approval
+                  and operational needs.
+                </p>
+                <p>
+                  Any equivalent PTO granted under this section may be
+                  scheduled and used later in the calendar year, subject to
+                  scheduling approval, patient care needs, facility coverage
+                  needs, and operational requirements.
+                </p>
+                <p>
+                  <strong>B. Providers Assigned to Other Hospital Facilities</strong>
+                  <br />
+                  This section applies to providers assigned to other
+                  hospital facilities, including OC Global, Placentia Linda,
+                  and Anaheim Regional Medical Center.
+                </p>
+                <p>
+                  Providers assigned to these hospitals will generally not be
+                  required to provide routine holiday coverage but should
+                  remain reasonably available in the event of urgent patient
+                  matters requiring provider input, coordination, or
+                  escalation.
+                </p>
+
+                <h4>IV. Non-Hospital Provider Holiday Policy</h4>
+                <p>
+                  This section applies to providers assigned to skilled
+                  nursing facilities, assisted living facilities, clinics,
+                  and other non-hospital settings.
+                </p>
+                <p>
+                  Non-hospital providers will generally have their schedules
+                  adjusted to accommodate recognized holidays when feasible.
+                </p>
+                <p>
+                  Patient schedules will be coordinated in advance to
+                  minimize disruption and allow providers to observe
+                  recognized holidays while maintaining appropriate
+                  continuity of care.
+                </p>
+                <p>
+                  Providers who are regularly scheduled for administrative
+                  work on Wednesdays may have their schedule adjusted during
+                  weeks in which a recognized holiday occurs. In those
+                  circumstances, providers will generally observe the
+                  holiday off and may instead round at their assigned
+                  facilities on Wednesday of that week, subject to
+                  operational needs and leadership direction.
+                </p>
+                <p>
+                  Supervisors and scheduling staff will work collaboratively
+                  with providers to ensure appropriate patient care
+                  continuity and timely communication with facilities.
+                </p>
+                <p>
+                  During holidays, ORCA Rehab's after hours exchange service
+                  will manage incoming calls and triage urgent concerns.
+                  Providers are expected to remain available for urgent
+                  patient matters when necessary.
+                </p>
+
+                <h4>V. Paid Time Off (PTO) and Paid Sick Leave</h4>
+                <p>
+                  <em>
+                    For purposes of this policy, "full-time employee" means
+                    an employee who is regularly scheduled to work the
+                    minimum number of hours established by ORCA Rehab for
+                    full-time benefit eligibility.
+                  </em>
+                </p>
+                <p>
+                  Eligible full-time employees receive eighty (80) hours of
+                  paid time off (PTO) per calendar year. PTO is intended for
+                  vacation, personal time, scheduled appointments, family
+                  needs, rest, and other approved absences from work. PTO
+                  accrues over time in accordance with ORCA Rehab's payroll
+                  and accrual practices and is not front-loaded unless
+                  expressly stated otherwise in writing.
+                </p>
+                <p>
+                  Eligible employees also receive paid sick leave in
+                  accordance with applicable California law. Paid sick leave
+                  accrues at the rate required by law or at such greater rate
+                  as ORCA Rehab may establish. Employees may use paid sick
+                  leave for all purposes permitted under applicable law.
+                </p>
+                <p>
+                  Unused paid sick leave may, with prior approval from ORCA
+                  Rehab, be converted to PTO at the end of the applicable
+                  calendar year. Once converted, such leave shall become
+                  accrued PTO and may be carried over subject to the maximum
+                  PTO accrual limit. PTO, including any sick leave converted
+                  to PTO with ORCA Rehab's approval, may be carried over from
+                  year to year. Once an employee's accrued PTO balance
+                  reaches one hundred (100) hours, PTO will cease accruing
+                  until the balance falls below one hundred (100) hours.
+                </p>
+                <p>
+                  Accrued but unused PTO shall be paid upon separation from
+                  employment to the extent required by applicable California
+                  law. Paid sick leave that has not been converted to PTO
+                  shall not be paid out upon separation except as required by
+                  applicable law.
+                </p>
+                <p>
+                  Employees must request planned PTO at least four (4) weeks
+                  in advance whenever reasonably possible. All PTO requests
+                  are subject to ORCA Rehab's approval and may be approved,
+                  denied, modified, postponed, or conditioned based upon
+                  staffing requirements, operational needs, patient care
+                  needs, provider coverage, facility coverage, scheduling
+                  conflicts, pending deadlines, employee role, or other
+                  legitimate business considerations. Employees should not
+                  make non-refundable travel arrangements until PTO has been
+                  approved.
+                </p>
+                <p>
+                  Except with prior written approval from ORCA Rehab,
+                  employees generally may not take more than two (2)
+                  consecutive weeks of PTO, personal leave, approved sick
+                  leave, or any combination thereof.
+                </p>
+                <p>
+                  Employees requesting sick leave should provide reasonable
+                  advance notice when the need for leave is foreseeable and,
+                  when unforeseeable, shall notify ORCA Rehab as soon as
+                  reasonably practicable while complying with the Company's
+                  normal attendance and call-out procedures, except where
+                  prohibited by law.
+                </p>
+                <p>
+                  ORCA Rehab reserves the right to interpret, administer,
+                  amend, suspend, or modify its PTO and paid sick leave
+                  policies, including accrual rates, conversion, rollover,
+                  approval procedures, maximum accrual limits, documentation
+                  requirements, and other administrative provisions, at any
+                  time, with or without notice, provided that any such
+                  changes comply with applicable federal, state, and local
+                  law.
+                </p>
+
+                <h4>VI. Documentation</h4>
+                <p>
+                  ORCA Rehab may request reasonable documentation supporting
+                  the need for paid sick leave only to the extent permitted
+                  by applicable law. Employees will not be required to
+                  disclose private medical information beyond what is
+                  legally permitted and reasonably necessary.
+                </p>
+
+                <h4>VII. Abuse or Misuse of Leave</h4>
+                <p>
+                  Employees are expected to use PTO, paid sick leave, and
+                  holiday benefits honestly and appropriately. Misuse of PTO,
+                  paid sick leave, holiday time, falsification of reasons
+                  for leave, failure to follow notice procedures, or abuse of
+                  leave may result in corrective action, up to and including
+                  termination, consistent with applicable law.
+                </p>
+                <p>
+                  ORCA Rehab will not discipline or retaliate against an
+                  employee for properly requesting or using paid sick leave
+                  or protected leave in accordance with applicable law.
+                </p>
+
+                <h4>VIII. No Retaliation</h4>
+                <p>
+                  ORCA Rehab prohibits retaliation, discrimination,
+                  discipline, or adverse action against any employee for
+                  properly requesting, using, or attempting to use paid sick
+                  leave or other protected leave in accordance with
+                  applicable law.
+                </p>
+                <p>
+                  Employees should report any concern regarding retaliation
+                  or interference with protected leave rights to ORCA Rehab
+                  leadership or the designated HR contact.
+                </p>
+
+                <h4>IX. Coordination With Other Leave Laws</h4>
+                <p>
+                  PTO and paid sick leave may run concurrently with other
+                  legally protected leaves where permitted by law. ORCA
+                  Rehab will comply with all applicable federal, state, and
+                  local leave laws.
+                </p>
+                <p>
+                  If any local, state, or federal law provides greater rights
+                  or benefits than this policy, ORCA Rehab will comply with
+                  the applicable legal requirement.
+                </p>
+
+                <h4>X. Operational Needs and Policy Administration</h4>
+                <p>
+                  ORCA Rehab reserves the right to modify schedules, holiday
+                  assignments, staffing requirements, provider coverage
+                  expectations, facility assignments, rounding schedules,
+                  PTO approvals, leave procedures, and other operational
+                  requirements based on patient care demands, operational
+                  needs, staffing availability, facility expectations, and
+                  applicable law.
+                </p>
+                <p>
+                  Any approved holiday time off beyond the provisions
+                  outlined in this policy may require the use of accrued
+                  PTO, vacation time, or unpaid leave, subject to management
+                  approval.
+                </p>
+                <p>
+                  ORCA Rehab retains discretion to interpret, administer,
+                  and implement this policy, consistent with applicable law.
+                </p>
+
+                <h4>XI. Policy Changes</h4>
+                <p>
+                  This policy is intended as a guideline only and does not
+                  create a contract of employment or guarantee any
+                  particular benefit. ORCA Rehab reserves the right to
+                  modify, amend, suspend, or discontinue this policy at any
+                  time, with or without notice, subject to applicable law.
+                  Nothing in this policy alters the at-will employment
+                  relationship between ORCA Rehab and its employees.
+                </p>
+
+                <h4>Employee Acknowledgment</h4>
+                <p>
+                  I acknowledge that I have received and reviewed the ORCA
+                  Rehab, Inc. Holiday, Paid Time Off, and Paid Sick Leave
+                  Policy. I understand that this policy may be modified from
+                  time to time, subject to applicable law, and that this
+                  policy does not alter the at-will employment relationship.
+                </p>
+                <p>
+                  I further acknowledge that this policy is intended solely
+                  as a guideline, does not constitute a contract of
+                  employment, and may be modified, amended, suspended, or
+                  discontinued by ORCA Rehab at any time, subject to
+                  applicable law.
+                </p>
+              </div>
+            </div>
+
+            <p className="policy-scroll-status">
+              {hasReadPolicy
+                ? "✓ You've reached the end of the policy."
+                : "⬇ Scroll to the bottom to continue."}
+            </p>
+
+            <label className="form-field">
+              <span>Type your full legal name to sign</span>
+              <input
+                type="text"
+                autoComplete="off"
+                placeholder={
+                  hasReadPolicy
+                    ? "e.g. Jane Doe"
+                    : "Scroll through the policy above first"
+                }
+                value={policyForm.fullName}
+                onChange={(event) =>
+                  setPolicyForm({ fullName: event.target.value })
+                }
+                disabled={!hasReadPolicy}
+                required
+              />
+              <small>
+                By typing your name, you are electronically signing this
+                policy agreement.
+              </small>
+            </label>
+
+            <div className="form-footer">
+              <p>All fields are required.</p>
+
               <button
                 className="primary-button"
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || !hasReadPolicy}
               >
-                {isSubmitting ? "Submitting…" : "Submit"}
+                {isSubmitting ? "Submitting…" : "Sign and submit"}
                 <span aria-hidden="true">→</span>
               </button>
             </div>
@@ -852,14 +1344,14 @@ function App() {
           <img className="form-logo" src={logo} alt="ORCA Rehab" />
 
           <div>
-            <p className="eyebrow">STEP 1 OF 3</p>
+            <p className="eyebrow">STEP 1 OF 4</p>
             <h1>Employee Information</h1>
             <p>Please enter your legal information exactly as it appears on official records.</p>
           </div>
         </header>
 
         <div className="progress-track" aria-label="Onboarding progress">
-          <div className="progress-value" style={{ width: "33%" }} />
+          <div className="progress-value" style={{ width: "25%" }} />
         </div>
 
         <form className="employee-form" onSubmit={handleEmployeeSubmit}>
