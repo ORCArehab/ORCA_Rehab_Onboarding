@@ -3,6 +3,7 @@ import type { ChangeEvent, SubmitEvent, UIEvent } from "react";
 import logo from "./assets/orca-logo.png";
 import policyPdf from "./assets/PolicyAgreement.pdf";
 import { API_BASE_URL } from "./apiConfig";
+import { uploadFile } from "./uploads";
 import "./App.css";
 
 type Page =
@@ -467,40 +468,35 @@ function App() {
     setIsSubmitting(true);
 
     try {
-      const formData = new FormData();
-
-      formData.append(
-        "employee",
-        JSON.stringify({
-          firstName: form.firstName,
-          lastName: form.lastName,
-          dateOfBirth: form.dateOfBirth,
-          phone: form.phone.replace(/\D/g, ""),
-          address: form.address,
-          degree: form.degree,
-          ssn: form.ssn.replace(/\D/g, ""),
-        }),
-      );
-      formData.append("bank", JSON.stringify(bankForm));
-      formData.append("additional", JSON.stringify(additionalForm));
-      formData.append(
-        "policy",
-        JSON.stringify({
-          fullName: policyForm.fullName.trim(),
-          signedAt: new Date().toISOString(),
-        }),
-      );
-
-      if (form.driverLicensePhoto) {
-        formData.append("driverLicensePhoto", form.driverLicensePhoto);
-      }
-      if (form.resume) {
-        formData.append("resume", form.resume);
-      }
+      // Files go straight to Supabase Storage first, in parallel. Only the
+      // resulting paths are sent to our backend, which keeps the submission
+      // request small enough for any host's body size limit.
+      const [driverLicense, resume] = await Promise.all([
+        form.driverLicensePhoto ? uploadFile(form.driverLicensePhoto) : null,
+        form.resume ? uploadFile(form.resume) : null,
+      ]);
 
       const response = await fetch(`${API_BASE_URL}/api/onboarding/submit`, {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee: {
+            firstName: form.firstName,
+            lastName: form.lastName,
+            dateOfBirth: form.dateOfBirth,
+            phone: form.phone.replace(/\D/g, ""),
+            address: form.address,
+            degree: form.degree,
+            ssn: form.ssn.replace(/\D/g, ""),
+          },
+          bank: bankForm,
+          additional: additionalForm,
+          policy: {
+            fullName: policyForm.fullName.trim(),
+            signedAt: new Date().toISOString(),
+          },
+          files: { driverLicense, resume },
+        }),
       });
 
       if (!response.ok) {

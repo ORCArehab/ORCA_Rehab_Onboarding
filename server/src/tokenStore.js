@@ -1,15 +1,34 @@
-const fs = require("fs");
-const path = require("path");
+const { getSupabase } = require("./supabase");
 
-const TOKEN_FILE = path.join(__dirname, "..", "tokens.json");
+const TABLE = "quickbooks_tokens";
 
-function saveTokens(tokens) {
-  fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2));
+// QuickBooks OAuth tokens used to live in server/tokens.json. They're in
+// Postgres now so the backend keeps no state on disk and a redeploy doesn't
+// silently disconnect QuickBooks. A single pinned row (id = 1) holds them.
+const SINGLETON_ID = 1;
+
+async function saveTokens(tokens) {
+  const { error } = await getSupabase()
+    .from(TABLE)
+    .upsert({ id: SINGLETON_ID, tokens, updated_at: new Date().toISOString() });
+
+  if (error) {
+    throw new Error(`Failed to store QuickBooks tokens: ${error.message}`);
+  }
 }
 
-function loadTokens() {
-  if (!fs.existsSync(TOKEN_FILE)) return null;
-  return JSON.parse(fs.readFileSync(TOKEN_FILE, "utf-8"));
+async function loadTokens() {
+  const { data, error } = await getSupabase()
+    .from(TABLE)
+    .select("tokens")
+    .eq("id", SINGLETON_ID)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to read QuickBooks tokens: ${error.message}`);
+  }
+
+  return data?.tokens ?? null;
 }
 
 module.exports = { saveTokens, loadTokens };

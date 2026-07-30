@@ -1,23 +1,4 @@
 {
-  "name": "orcarehab-onboarding-server",
-  "version": "0.0.1",
   "private": true,
-  "type": "commonjs",
-  "main": "src/index.js",
-  "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
-  },
-  "dependencies": {
-    "bcrypt": "^6.0.0",
-    "better-sqlite3": "^11.3.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "express-session": "^1.18.0",
-    "intuit-oauth": "^4.2.5",
-    "multer": "^2.2.0",
-    "node-quickbooks": "^2.0.50",
-    "nodemailer": "^9.0.3"
-  }
+  "type": "commonjs"
 }
