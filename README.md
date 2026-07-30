@@ -82,9 +82,12 @@ One consequence worth knowing: a new hire who uploads a file and then abandons t
 Earlier versions stored submissions in `server/data.db` and files in `server/uploads/`. To carry existing data over:
 
 ```bash
+npm install --no-save better-sqlite3                         # only needed for this
 node server/scripts/migrate-sqlite-to-supabase.js            # dry run — prints what it would do
 node server/scripts/migrate-sqlite-to-supabase.js --commit   # actually migrates
 ```
+
+`better-sqlite3` isn't a project dependency on purpose — it's a native addon needed only by this script, and leaving it out means nothing has to compile during a deployment build.
 
 Keep `ENCRYPTION_KEY` unchanged — the script copies the encrypted blobs verbatim without opening them, so a different key makes migrated rows unreadable. Postgres assigns fresh ids rather than reusing the SQLite ones, which means the script is **not** idempotent: running it twice with `--commit` imports everything twice. Once the dashboard looks right, delete `server/data.db` and `server/uploads/`.
 

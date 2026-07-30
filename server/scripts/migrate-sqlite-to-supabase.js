@@ -39,7 +39,18 @@ const CONTENT_TYPES = {
 function readLegacyRows() {
   if (!fs.existsSync(DB_PATH)) return [];
 
-  const Database = require("better-sqlite3");
+  // better-sqlite3 is deliberately not a project dependency: it's a native
+  // addon needed only by this one-off script, and keeping it out means nothing
+  // has to compile during a deployment build.
+  let Database;
+  try {
+    Database = require("better-sqlite3");
+  } catch {
+    throw new Error(
+      "better-sqlite3 isn't installed — it's only needed for this migration. Install it temporarily with:\n  npm install --no-save better-sqlite3",
+    );
+  }
+
   const db = new Database(DB_PATH, { readonly: true });
 
   try {

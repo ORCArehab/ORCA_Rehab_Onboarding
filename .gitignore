@@ -14,11 +14,16 @@ dist-ssr
 
 # Backend secrets and local data
 server/.env
+# No longer written (QuickBooks tokens live in Supabase now), but kept ignored
+# so an older checkout can't leak OAuth refresh tokens.
 server/tokens.json
 server/data.db
 server/data.db-shm
 server/data.db-wal
 server/uploads/
+
+# Vercel CLI local state
+.vercel
 
 # Editor directories and files
 .vscode/*
