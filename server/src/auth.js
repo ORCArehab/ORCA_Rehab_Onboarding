@@ -1,4 +1,7 @@
-const bcrypt = require("bcrypt");
+// bcryptjs, not bcrypt: the latter is a native addon that has to compile for
+// the deployment target, which is fragile on serverless hosts. This is pure
+// JS with an identical hash/compare API and the same hash format.
+const bcrypt = require("bcryptjs");
 
 async function verifyLogin(username, password) {
   const expectedUsername = process.env.ADMIN_USERNAME;

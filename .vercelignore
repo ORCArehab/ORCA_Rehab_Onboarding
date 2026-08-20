@@ -1,0 +1,12 @@
+# Local-only artifacts from the pre-Supabase version. Nothing here should ever
+# reach a deployment — the backend keeps no state on disk.
+server/.env
+server/data.db
+server/data.db-shm
+server/data.db-wal
+server/uploads/
+
+# One-off migration tooling and the SQL schema are applied by hand, never at
+# runtime, so they don't need to be in the function bundle.
+server/scripts/
+server/supabase/

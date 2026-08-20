@@ -23,7 +23,7 @@ async function handleCallback(oauthClient, callbackUrl) {
   const tokens = authResponse.getJson();
   const realmId = oauthClient.getToken().realmId;
 
-  saveTokens({ ...tokens, realmId });
+  await saveTokens({ ...tokens, realmId });
 
   return tokens;
 }
@@ -31,7 +31,7 @@ async function handleCallback(oauthClient, callbackUrl) {
 // QuickBooks access tokens expire after 1 hour, so we refresh using the
 // stored refresh token before every request rather than tracking expiry.
 async function refreshTokens() {
-  const tokens = loadTokens();
+  const tokens = await loadTokens();
 
   if (!tokens?.refresh_token) {
     throw new Error(
@@ -45,7 +45,7 @@ async function refreshTokens() {
   );
   const refreshedTokens = authResponse.getJson();
 
-  saveTokens({ ...refreshedTokens, realmId: tokens.realmId });
+  await saveTokens({ ...refreshedTokens, realmId: tokens.realmId });
 
   return { ...refreshedTokens, realmId: tokens.realmId };
 }

@@ -11,7 +11,7 @@ interface SubmissionSummary {
   first_name: string;
   last_name: string;
   quickbooks_employee_id: string | null;
-  quickbooks_synced: number;
+  quickbooks_synced: boolean;
 }
 
 interface BankAccountDetail {
