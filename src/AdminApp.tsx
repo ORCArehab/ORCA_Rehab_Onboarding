@@ -10,15 +10,11 @@ interface SubmissionSummary {
   created_at: string;
   first_name: string;
   last_name: string;
-  quickbooks_employee_id: string | null;
-  quickbooks_synced: boolean;
 }
 
-interface BankAccountDetail {
-  bankName: string;
-  accountType: string;
-  routingNumber: string;
-  accountNumber: string;
+interface DocumentVerdict {
+  matches: boolean;
+  reason: string | null;
 }
 
 interface SubmissionDetail {
@@ -26,35 +22,32 @@ interface SubmissionDetail {
   createdAt: string;
   driverLicensePath: string | null;
   resumePath: string | null;
-  quickbooksEmployeeId: string | null;
-  quickbooksSynced: boolean;
+  degreeCertificatePath: string | null;
+  boardCertificatePath: string | null;
+  deaCertificatePath: string | null;
+  professionalLiabilityPath: string | null;
+  stateMedicalLicensePath: string | null;
+  blsCertificatePath: string | null;
+  aclsCertificatePath: string | null;
+  documentVerdicts: Record<string, DocumentVerdict> | null;
   employee: {
     firstName: string;
     lastName: string;
     dateOfBirth: string;
+    stateOfBirth: string;
     phone: string;
     address: string;
-    degree: string;
     ssn: string;
-  };
-  bank: {
-    splitDeposit: boolean;
-    primaryAccount: BankAccountDetail;
-    secondaryAccount: BankAccountDetail;
-    primaryAllocation: string;
-  };
-  additional: {
-    emergencyContactName: string;
-    emergencyContactRelationship: string;
-    emergencyContactPhone: string;
-    workAuthorization: string;
-    filingStatus: string;
-    dependentsAmount: string;
-    extraWithholding: string;
-  };
-  policy?: {
-    fullName: string;
-    signedAt: string;
+    providerRole: string;
+    degree: string;
+    npi: string;
+    deaExpiration: string;
+    caqhUsername: string;
+    caqhPassword: string;
+    nppesUsername: string;
+    nppesPassword: string;
+    pecosUsername: string;
+    pecosPassword: string;
   };
 }
 
@@ -71,15 +64,70 @@ function DetailField({ label, value }: { label: string; value?: string | null })
   );
 }
 
+function isImagePath(path: string): boolean {
+  return /\.(png|jpe?g|webp|heic|heif|gif|bmp|tiff)$/i.test(path);
+}
+
+function isPdfPath(path: string): boolean {
+  return /\.pdf$/i.test(path);
+}
+
+function DocumentPreview({
+  label,
+  path,
+  verdict,
+}: {
+  label: string;
+  path: string | null;
+  verdict?: DocumentVerdict;
+}) {
+  if (!path) return null;
+
+  const src = `${API_BASE_URL}/api/admin/uploads/${path}`;
+
+  return (
+    <div className="document-card">
+      <div className="document-card-header">
+        <span className="document-card-label">{label}</span>
+        {verdict && (
+          <span className={`document-verdict ${verdict.matches ? "matches" : "mismatch"}`}>
+            {verdict.matches ? "✓ Matches" : `⚠ ${verdict.reason ?? "Doesn't match"}`}
+          </span>
+        )}
+      </div>
+
+      {isImagePath(path) ? (
+        <img className="document-preview" src={src} alt={label} />
+      ) : isPdfPath(path) ? (
+        <iframe className="document-preview" src={src} title={label} />
+      ) : (
+        <p className="document-preview-fallback">Preview not available for this file type.</p>
+      )}
+
+      <a className="file-link" href={src} target="_blank" rel="noopener noreferrer">
+        Open in new tab
+      </a>
+    </div>
+  );
+}
+
 function AdminApp() {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [submissions, setSubmissions] = useState<SubmissionSummary[]>([]);
   const [selected, setSelected] = useState<SubmissionDetail | null>(null);
-  const [approvingId, setApprovingId] = useState<number | null>(null);
 
   useEffect(() => {
+    // TEMPORARY: skip the login screen entirely in local dev so /admin is
+    // reachable without signing in. Backend auth is also disabled right now
+    // (see server/src/auth.js) — remove both before this goes anywhere near
+    // production.
+    if (import.meta.env.DEV) {
+      setAuthStatus("authenticated");
+      return;
+    }
+
     fetch(`${API_BASE_URL}/api/admin/session`, { credentials: "include" })
       .then((res) => res.json())
       .then((data) => setAuthStatus(data.authenticated ? "authenticated" : "unauthenticated"))
@@ -152,26 +200,8 @@ function AdminApp() {
     setSelected(await res.json());
   }
 
-  async function approveSubmission(id: number) {
-    setApprovingId(id);
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/submissions/${id}/approve`, {
-        method: "POST",
-        credentials: "include",
-      });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        alert(body?.error ?? "Failed to approve this submission.");
-        return;
-      }
-
-      await loadSubmissions();
-      if (selected?.id === id) await openDetail(id);
-    } finally {
-      setApprovingId(null);
-    }
+  function downloadCredentialingPackage(id: number) {
+    window.open(`${API_BASE_URL}/api/admin/submissions/${id}/download`, "_blank");
   }
 
   async function removeSubmission(id: number) {
@@ -245,7 +275,6 @@ function AdminApp() {
               <tr>
                 <th>Name</th>
                 <th>Submitted</th>
-                <th>QuickBooks</th>
                 <th />
               </tr>
             </thead>
@@ -261,27 +290,16 @@ function AdminApp() {
                       timeStyle: "short",
                     })}
                   </td>
-                  <td>
-                    <span
-                      className={`badge ${submission.quickbooks_synced ? "synced" : "pending"}`}
-                    >
-                      {submission.quickbooks_synced ? "Synced" : "Awaiting approval"}
-                    </span>
-                  </td>
                   <td className="row-actions">
                     <button type="button" onClick={() => openDetail(submission.id)}>
                       View
                     </button>
-                    {!submission.quickbooks_synced && (
-                      <button
-                        type="button"
-                        className="approve"
-                        disabled={approvingId === submission.id}
-                        onClick={() => approveSubmission(submission.id)}
-                      >
-                        {approvingId === submission.id ? "Approving…" : "Approve"}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => downloadCredentialingPackage(submission.id)}
+                    >
+                      Download
+                    </button>
                     <button
                       type="button"
                       className="danger"
@@ -312,153 +330,88 @@ function AdminApp() {
               <h2>
                 {selected.employee.firstName} {selected.employee.lastName}
               </h2>
-              <p className="admin-sync-status">
-                {selected.quickbooksSynced
-                  ? `Synced to QuickBooks (Employee ID ${selected.quickbooksEmployeeId})`
-                  : "Awaiting approval — not yet created in QuickBooks"}
-              </p>
-              {!selected.quickbooksSynced && (
-                <button
-                  type="button"
-                  className="primary-button admin-approve-button"
-                  disabled={approvingId === selected.id}
-                  onClick={() => approveSubmission(selected.id)}
-                >
-                  {approvingId === selected.id
-                    ? "Approving…"
-                    : "Approve & create in QuickBooks"}
-                  <span aria-hidden="true">→</span>
-                </button>
-              )}
+              <button
+                type="button"
+                className="primary-button admin-download-button"
+                onClick={() => downloadCredentialingPackage(selected.id)}
+              >
+                Download credentialing folder
+                <span aria-hidden="true">↓</span>
+              </button>
             </div>
 
             <div className="detail-section">
               <h2>Employee information</h2>
               <div className="detail-grid">
                 <DetailField label="Date of birth" value={selected.employee.dateOfBirth} />
+                <DetailField label="State of birth" value={selected.employee.stateOfBirth} />
                 <DetailField label="Phone" value={selected.employee.phone} />
                 <DetailField label="Address" value={selected.employee.address} />
-                <DetailField label="Degree" value={selected.employee.degree} />
                 <DetailField label="SSN" value={selected.employee.ssn} />
               </div>
-              <div className="admin-file-links">
-                {selected.driverLicensePath && (
-                  <a
-                    className="file-link"
-                    href={`${API_BASE_URL}/api/admin/uploads/${selected.driverLicensePath}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    View driver's license photo
-                  </a>
-                )}
-                {selected.resumePath && (
-                  <a
-                    className="file-link"
-                    href={`${API_BASE_URL}/api/admin/uploads/${selected.resumePath}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    View resume
-                  </a>
-                )}
+            </div>
+
+            <div className="detail-section">
+              <h2>Provider details</h2>
+              <div className="detail-grid">
+                <DetailField label="Provider role" value={selected.employee.providerRole} />
+                <DetailField label="Degree" value={selected.employee.degree} />
+                <DetailField label="NPI" value={selected.employee.npi} />
+                <DetailField label="DEA expiration" value={selected.employee.deaExpiration} />
               </div>
             </div>
 
             <div className="detail-section">
-              <h2>Direct deposit</h2>
+              <h2>Credentialing portal logins</h2>
               <div className="detail-grid">
-                <DetailField label="Bank name" value={selected.bank?.primaryAccount?.bankName} />
-                <DetailField
-                  label="Account type"
-                  value={selected.bank?.primaryAccount?.accountType}
-                />
-                <DetailField
-                  label="Routing number"
-                  value={selected.bank?.primaryAccount?.routingNumber}
-                />
-                <DetailField
-                  label="Account number"
-                  value={selected.bank?.primaryAccount?.accountNumber}
-                />
-              </div>
-
-              {selected.bank?.splitDeposit && (
-                <>
-                  <p className="account-label admin-split-label">
-                    Split deposit — Account 2 (
-                    {selected.bank.primaryAllocation
-                      ? 100 - Number(selected.bank.primaryAllocation)
-                      : 0}
-                    %)
-                  </p>
-                  <div className="detail-grid">
-                    <DetailField
-                      label="Bank name"
-                      value={selected.bank?.secondaryAccount?.bankName}
-                    />
-                    <DetailField
-                      label="Account type"
-                      value={selected.bank?.secondaryAccount?.accountType}
-                    />
-                    <DetailField
-                      label="Routing number"
-                      value={selected.bank?.secondaryAccount?.routingNumber}
-                    />
-                    <DetailField
-                      label="Account number"
-                      value={selected.bank?.secondaryAccount?.accountNumber}
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="detail-section">
-              <h2>Emergency contact &amp; tax withholding</h2>
-              <div className="detail-grid">
-                <DetailField
-                  label="Contact name"
-                  value={selected.additional?.emergencyContactName}
-                />
-                <DetailField
-                  label="Relationship"
-                  value={selected.additional?.emergencyContactRelationship}
-                />
-                <DetailField
-                  label="Contact phone"
-                  value={selected.additional?.emergencyContactPhone}
-                />
-                <DetailField
-                  label="Work authorization"
-                  value={selected.additional?.workAuthorization}
-                />
-                <DetailField label="Filing status" value={selected.additional?.filingStatus} />
-                <DetailField
-                  label="Dependents amount"
-                  value={selected.additional?.dependentsAmount}
-                />
-                <DetailField
-                  label="Extra withholding"
-                  value={selected.additional?.extraWithholding}
-                />
+                <DetailField label="CAQH username" value={selected.employee.caqhUsername} />
+                <DetailField label="CAQH password" value={selected.employee.caqhPassword} />
+                <DetailField label="NPPES username" value={selected.employee.nppesUsername} />
+                <DetailField label="NPPES password" value={selected.employee.nppesPassword} />
+                <DetailField label="PECOS username" value={selected.employee.pecosUsername} />
+                <DetailField label="PECOS password" value={selected.employee.pecosPassword} />
               </div>
             </div>
 
             <div className="detail-section">
-              <h2>Policy agreement</h2>
-              <div className="detail-grid">
-                <DetailField label="Signed by" value={selected.policy?.fullName} />
-                <DetailField
-                  label="Signed at"
-                  value={
-                    selected.policy?.signedAt
-                      ? new Date(selected.policy.signedAt).toLocaleString(undefined, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })
-                      : undefined
-                  }
+              <h2>Documents</h2>
+              <div className="document-grid">
+                <DocumentPreview label="Driver's license" path={selected.driverLicensePath} />
+                <DocumentPreview label="Resume" path={selected.resumePath} />
+                <DocumentPreview
+                  label="Degree certificate"
+                  path={selected.degreeCertificatePath}
+                  verdict={selected.documentVerdicts?.degreeCertificate}
+                />
+                <DocumentPreview
+                  label="Board certificate"
+                  path={selected.boardCertificatePath}
+                  verdict={selected.documentVerdicts?.boardCertificate}
+                />
+                <DocumentPreview
+                  label="DEA certificate"
+                  path={selected.deaCertificatePath}
+                  verdict={selected.documentVerdicts?.deaCertificate}
+                />
+                <DocumentPreview
+                  label="Professional liability"
+                  path={selected.professionalLiabilityPath}
+                  verdict={selected.documentVerdicts?.professionalLiability}
+                />
+                <DocumentPreview
+                  label="State medical license"
+                  path={selected.stateMedicalLicensePath}
+                  verdict={selected.documentVerdicts?.stateMedicalLicense}
+                />
+                <DocumentPreview
+                  label="BLS certificate"
+                  path={selected.blsCertificatePath}
+                  verdict={selected.documentVerdicts?.blsCertificate}
+                />
+                <DocumentPreview
+                  label="ACLS certificate"
+                  path={selected.aclsCertificatePath}
+                  verdict={selected.documentVerdicts?.aclsCertificate}
                 />
               </div>
             </div>

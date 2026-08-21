@@ -68,8 +68,6 @@ async function migrateRows(rows) {
     last_name: row.last_name,
     driver_license_path: row.driver_license_path,
     resume_path: row.resume_path,
-    quickbooks_employee_id: row.quickbooks_employee_id,
-    quickbooks_synced: Boolean(row.quickbooks_synced),
     encrypted_data: row.encrypted_data,
   }));
 

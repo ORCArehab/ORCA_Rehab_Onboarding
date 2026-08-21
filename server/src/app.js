@@ -1,17 +1,12 @@
 const express = require("express");
 const cors = require("cors");
 const session = require("express-session");
-const {
-  createOAuthClient,
-  getAuthorizeUri,
-  handleCallback,
-  createEmployee,
-} = require("./quickbooks");
-const { loadTokens } = require("./tokenStore");
 const db = require("./db");
 const { createSignedUpload, resolveUploadedFile, downloadFile, deleteFiles } = require("./storage");
 const { verifyLogin, requireAuth } = require("./auth");
 const { notifyNewSubmission } = require("./mailer");
+const documentVerification = require("./documentVerification");
+const { buildCredentialingZip } = require("./credentialingPackage");
 
 const app = express();
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
@@ -92,72 +87,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// --- QuickBooks OAuth ---
-
-// Step 1: visit this in a browser to connect this server to your QuickBooks
-// Online company. Only needs to be done once (until the refresh token expires).
-app.get("/api/quickbooks/connect", (req, res) => {
-  const oauthClient = createOAuthClient();
-  res.redirect(getAuthorizeUri(oauthClient));
-});
-
-// Step 2: QuickBooks redirects here after the user approves access.
-app.get("/api/quickbooks/callback", async (req, res) => {
-  try {
-    const oauthClient = createOAuthClient();
-    await handleCallback(oauthClient, req.url);
-    res.send("QuickBooks connected. You can close this tab.");
-  } catch (error) {
-    console.error("QuickBooks OAuth callback failed:", error);
-    res.status(500).send("Failed to connect QuickBooks. Check server logs.");
-  }
-});
-
-app.get("/api/quickbooks/status", async (req, res) => {
-  try {
-    res.json({ connected: Boolean(await loadTokens()) });
-  } catch (error) {
-    console.error("Failed to check QuickBooks connection status:", error);
-    res.status(500).json({ error: "Could not check QuickBooks status." });
-  }
-});
-
-// Maps our onboarding form fields to the subset of the QuickBooks Online
-// Employee entity that's actually writable via the public Accounting API.
-// QuickBooks Online Payroll (direct deposit, W-4 withholding) is NOT covered
-// by this public API — Intuit restricts payroll writes to approved partners.
-function isValidBirthDate(dateOfBirth) {
-  const [year] = (dateOfBirth || "").split("-");
-  const currentYear = new Date().getFullYear();
-
-  return (
-    year?.length === 4 &&
-    Number(year) >= currentYear - 100 &&
-    Number(year) <= currentYear - 14
-  );
-}
-
-function toQuickBooksEmployee(employee) {
-  const qboEmployee = {
-    GivenName: employee.firstName,
-    FamilyName: employee.lastName,
-    HiredDate: new Date().toISOString().slice(0, 10),
-  };
-
-  if (employee.ssn) qboEmployee.SSN = employee.ssn;
-  if (isValidBirthDate(employee.dateOfBirth)) {
-    qboEmployee.BirthDate = employee.dateOfBirth;
-  } else if (employee.dateOfBirth) {
-    console.warn(
-      `Rejected date of birth "${employee.dateOfBirth}" for ${employee.firstName} ${employee.lastName} — not sent to QuickBooks.`,
-    );
-  }
-  if (employee.phone) qboEmployee.PrimaryPhone = { FreeFormNumber: employee.phone };
-  if (employee.address) qboEmployee.PrimaryAddr = { Line1: employee.address };
-
-  return qboEmployee;
-}
-
 // --- File uploads ---
 
 // Hands the browser a short-lived URL it can PUT a file to directly. Files do
@@ -176,31 +105,153 @@ app.post("/api/onboarding/upload-url", async (req, res) => {
 });
 
 // --- Onboarding submission ---
-// Submissions are only ever saved here — QuickBooks is never touched
-// automatically. An HR/Payroll admin has to review the submission and
-// explicitly approve it (see POST /api/admin/submissions/:id/approve)
-// before an employee record is created in QuickBooks.
+
+// The credentialing documents that get AI-verified against what they're
+// supposed to be — driver's license and resume are excluded since there's no
+// meaningful "wrong document" case for those the way there is for, say,
+// someone attaching their driver's license photo as a DEA certificate. Keyed
+// by the same name the frontend uses for that file in the `files` object of
+// both /verify-document and /submit.
+const DOCUMENT_CHECKS = {
+  degreeCertificate: {
+    pathKey: "degreeCertificatePath",
+    label: "degree certificate",
+    expectedDescription: "a diploma or degree certificate confirming completion of a degree program",
+  },
+  boardCertificate: {
+    pathKey: "boardCertificatePath",
+    label: "board certificate",
+    expectedDescription:
+      "a professional board certification document — e.g. an NCCPA certificate (for a PA), an AANPCB or ANCC certificate (for an NP), or an ABMS specialty board certificate such as ABIM, ABFM, or ABS (for an MD)",
+  },
+  deaCertificate: {
+    pathKey: "deaCertificatePath",
+    label: "DEA certificate",
+    expectedDescription: "a DEA (Drug Enforcement Administration) registration certificate",
+  },
+  professionalLiability: {
+    pathKey: "professionalLiabilityPath",
+    label: "professional liability document",
+    expectedDescription: "a professional liability (malpractice) insurance certificate or proof of coverage",
+  },
+  stateMedicalLicense: {
+    pathKey: "stateMedicalLicensePath",
+    label: "state medical license",
+    expectedDescription: "a state-issued medical/professional license for a PA, NP, or MD",
+  },
+  blsCertificate: {
+    pathKey: "blsCertificatePath",
+    label: "BLS certificate",
+    expectedDescription: "a Basic Life Support (BLS) certification card or certificate",
+  },
+  aclsCertificate: {
+    pathKey: "aclsCertificatePath",
+    label: "ACLS certificate",
+    expectedDescription: "an Advanced Cardiovascular Life Support (ACLS) certification card or certificate",
+  },
+};
+
+// AI verification only works on what the model can actually read.
+function isVerifiableContentType(contentType) {
+  return contentType === "application/pdf" || contentType?.startsWith("image/");
+}
+
+// Checks a single uploaded document against what it's supposed to be, right
+// after the browser uploads it — this is what powers the live checkmark next
+// to each document field. Verification is best-effort: if it isn't configured,
+// or the model can't read this file type, the document is treated as passing
+// rather than blocking the new hire.
+app.post("/api/onboarding/verify-document", async (req, res) => {
+  const { file, documentType } = req.body ?? {};
+  const check = DOCUMENT_CHECKS[documentType];
+
+  if (!check) {
+    return res.status(400).json({ error: "Unknown document type." });
+  }
+
+  let path;
+
+  try {
+    path = await resolveUploadedFile(file, check.label);
+  } catch (error) {
+    const status = error.statusCode ?? 500;
+    if (status === 500) console.error("Failed to verify uploaded file:", error);
+    return res.status(status).json({ error: error.message });
+  }
+
+  if (!path) {
+    return res.status(400).json({ error: "No file was uploaded." });
+  }
+
+  if (!documentVerification.isConfigured()) {
+    return res.json({ skipped: true, matches: true, reason: "Document verification is not configured." });
+  }
+
+  try {
+    const downloaded = await downloadFile(path);
+
+    if (!downloaded || !isVerifiableContentType(downloaded.contentType)) {
+      return res.json({
+        skipped: true,
+        matches: true,
+        reason: "This file type can't be automatically verified.",
+      });
+    }
+
+    const verdict = await documentVerification.verifyDocument({
+      buffer: downloaded.buffer,
+      contentType: downloaded.contentType,
+      filename: path,
+      expectedDescription: check.expectedDescription,
+    });
+
+    res.json(verdict);
+  } catch (error) {
+    console.error(`Document verification failed for ${documentType}:`, error);
+    res.status(502).json({ error: "Could not verify this document right now. Please try again." });
+  }
+});
+
 app.post("/api/onboarding/submit", async (req, res) => {
-  const { employee, bank, additional, policy, files } = req.body ?? {};
+  const { employee, files, documentVerdicts } = req.body ?? {};
 
   if (!employee?.firstName || !employee?.lastName) {
     return res.status(400).json({ error: "Employee first and last name are required." });
   }
 
-  if (!policy?.fullName || !policy?.signedAt) {
-    return res
-      .status(400)
-      .json({ error: "The policy agreement must be signed before submitting." });
-  }
-
-  let driverLicensePath, resumePath;
+  let driverLicensePath,
+    resumePath,
+    degreeCertificatePath,
+    boardCertificatePath,
+    deaCertificatePath,
+    professionalLiabilityPath,
+    stateMedicalLicensePath,
+    blsCertificatePath,
+    aclsCertificatePath;
 
   try {
-    // Verify both uploads before writing anything, so a submission row can
+    // Verify every upload before writing anything, so a submission row can
     // never point at a file that isn't there or isn't ours to reference.
-    [driverLicensePath, resumePath] = await Promise.all([
+    [
+      driverLicensePath,
+      resumePath,
+      degreeCertificatePath,
+      boardCertificatePath,
+      deaCertificatePath,
+      professionalLiabilityPath,
+      stateMedicalLicensePath,
+      blsCertificatePath,
+      aclsCertificatePath,
+    ] = await Promise.all([
       resolveUploadedFile(files?.driverLicense, "driver's license"),
       resolveUploadedFile(files?.resume, "resume"),
+      resolveUploadedFile(files?.degreeCertificate, "degree certificate"),
+      resolveUploadedFile(files?.boardCertificate, "board certificate"),
+      resolveUploadedFile(files?.deaCertificate, "DEA certificate"),
+      resolveUploadedFile(files?.professionalLiability, "professional liability document"),
+      resolveUploadedFile(files?.stateMedicalLicense, "state medical license"),
+      resolveUploadedFile(files?.blsCertificate, "BLS certificate"),
+      resolveUploadedFile(files?.aclsCertificate, "ACLS certificate"),
     ]);
   } catch (error) {
     const status = error.statusCode ?? 500;
@@ -208,16 +259,30 @@ app.post("/api/onboarding/submit", async (req, res) => {
     return res.status(status).json({ error: error.message });
   }
 
+  const paths = {
+    driverLicensePath,
+    resumePath,
+    degreeCertificatePath,
+    boardCertificatePath,
+    deaCertificatePath,
+    professionalLiabilityPath,
+    stateMedicalLicensePath,
+    blsCertificatePath,
+    aclsCertificatePath,
+  };
+
   let submissionId;
 
   try {
+    // documentVerdicts is whatever /verify-document already returned to the
+    // browser for each file, live as it was uploaded — not re-checked here.
+    // Re-running the AI check at submit time would just double the cost for
+    // no benefit, since resolveUploadedFile above already confirms these are
+    // genuinely files this session uploaded.
     submissionId = await db.createSubmission({
       employee,
-      bank,
-      additional,
-      policy,
-      driverLicensePath,
-      resumePath,
+      documentVerdicts,
+      ...paths,
     });
   } catch (error) {
     console.error("Failed to save onboarding submission:", error);
@@ -282,32 +347,22 @@ app.get("/api/admin/submissions/:id", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/admin/submissions/:id/approve", requireAuth, async (req, res) => {
-  let submission;
-
+// Packages every uploaded credentialing document (plus two generated PDFs for
+// the login-info and identity fields) into a single ZIP, matching ORCA's
+// existing manual folder-naming convention — see credentialingPackage.js.
+app.get("/api/admin/submissions/:id/download", requireAuth, async (req, res) => {
   try {
-    submission = await db.getSubmission(req.params.id);
+    const submission = await db.getSubmission(req.params.id);
+    if (!submission) return res.status(404).json({ error: "Not found." });
+
+    const { buffer, filename } = await buildCredentialingZip(submission);
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(buffer);
   } catch (error) {
-    console.error(`Failed to load submission ${req.params.id} for approval:`, error);
-    return res.status(500).json({ error: "Could not load this submission." });
-  }
-
-  if (!submission) return res.status(404).json({ error: "Not found." });
-
-  if (submission.quickbooksSynced) {
-    return res.json({
-      success: true,
-      quickbooksEmployeeId: submission.quickbooksEmployeeId,
-    });
-  }
-
-  try {
-    const qboEmployee = await createEmployee(toQuickBooksEmployee(submission.employee));
-    await db.markQuickBooksSynced(submission.id, qboEmployee.Id);
-    res.json({ success: true, quickbooksEmployeeId: qboEmployee.Id });
-  } catch (error) {
-    console.error(`Failed to approve submission ${submission.id} into QuickBooks:`, error);
-    res.status(502).json({ error: "Failed to create employee in QuickBooks." });
+    console.error(`Failed to build credentialing package for submission ${req.params.id}:`, error);
+    res.status(500).json({ error: "Could not build the credentialing document package." });
   }
 });
 
@@ -316,7 +371,17 @@ app.delete("/api/admin/submissions/:id", requireAuth, async (req, res) => {
     const deleted = await db.deleteSubmission(req.params.id);
     if (!deleted) return res.status(404).json({ error: "Not found." });
 
-    await deleteFiles([deleted.driver_license_path, deleted.resume_path]);
+    await deleteFiles([
+      deleted.driver_license_path,
+      deleted.resume_path,
+      deleted.degree_certificate_path,
+      deleted.board_certificate_path,
+      deleted.dea_certificate_path,
+      deleted.professional_liability_path,
+      deleted.state_medical_license_path,
+      deleted.bls_certificate_path,
+      deleted.acls_certificate_path,
+    ]);
 
     res.json({ success: true });
   } catch (error) {

@@ -36,7 +36,7 @@ async function notifyNewSubmission({ firstName, lastName }) {
     from: process.env.NOTIFY_EMAIL_FROM || process.env.SMTP_USER,
     to: process.env.NOTIFY_EMAIL_TO,
     subject: `New onboarding submission: ${firstName} ${lastName}`,
-    text: `${firstName} ${lastName} just completed onboarding.\n\nView details and manually enter bank/W-4 info into QuickBooks Payroll here:\n${dashboardUrl}`,
+    text: `${firstName} ${lastName} just completed onboarding.\n\nView details here:\n${dashboardUrl}`,
   });
 }
 

@@ -11,8 +11,20 @@ function failed(action, error) {
   return new Error(`Failed to ${action}: ${error.message}`);
 }
 
-async function createSubmission({ employee, bank, additional, policy, driverLicensePath, resumePath }) {
-  const encryptedData = encrypt(JSON.stringify({ employee, bank, additional, policy }));
+async function createSubmission({
+  employee,
+  documentVerdicts,
+  driverLicensePath,
+  resumePath,
+  degreeCertificatePath,
+  boardCertificatePath,
+  deaCertificatePath,
+  professionalLiabilityPath,
+  stateMedicalLicensePath,
+  blsCertificatePath,
+  aclsCertificatePath,
+}) {
+  const encryptedData = encrypt(JSON.stringify({ employee }));
 
   const { data, error } = await getSupabase()
     .from(TABLE)
@@ -22,7 +34,14 @@ async function createSubmission({ employee, bank, additional, policy, driverLice
       last_name: employee.lastName,
       driver_license_path: driverLicensePath || null,
       resume_path: resumePath || null,
-      quickbooks_synced: false,
+      degree_certificate_path: degreeCertificatePath || null,
+      board_certificate_path: boardCertificatePath || null,
+      dea_certificate_path: deaCertificatePath || null,
+      professional_liability_path: professionalLiabilityPath || null,
+      state_medical_license_path: stateMedicalLicensePath || null,
+      bls_certificate_path: blsCertificatePath || null,
+      acls_certificate_path: aclsCertificatePath || null,
+      document_verdicts: documentVerdicts || null,
       encrypted_data: encryptedData,
     })
     .select("id")
@@ -33,19 +52,10 @@ async function createSubmission({ employee, bank, additional, policy, driverLice
   return data.id;
 }
 
-async function markQuickBooksSynced(id, quickbooksEmployeeId) {
-  const { error } = await getSupabase()
-    .from(TABLE)
-    .update({ quickbooks_synced: true, quickbooks_employee_id: quickbooksEmployeeId })
-    .eq("id", id);
-
-  if (error) throw failed("record the QuickBooks sync", error);
-}
-
 async function listSubmissions() {
   const { data, error } = await getSupabase()
     .from(TABLE)
-    .select("id, created_at, first_name, last_name, quickbooks_employee_id, quickbooks_synced")
+    .select("id, created_at, first_name, last_name")
     .order("created_at", { ascending: false });
 
   if (error) throw failed("list submissions", error);
@@ -70,8 +80,14 @@ async function getSubmission(id) {
     createdAt: row.created_at,
     driverLicensePath: row.driver_license_path,
     resumePath: row.resume_path,
-    quickbooksEmployeeId: row.quickbooks_employee_id,
-    quickbooksSynced: Boolean(row.quickbooks_synced),
+    degreeCertificatePath: row.degree_certificate_path,
+    boardCertificatePath: row.board_certificate_path,
+    deaCertificatePath: row.dea_certificate_path,
+    professionalLiabilityPath: row.professional_liability_path,
+    stateMedicalLicensePath: row.state_medical_license_path,
+    blsCertificatePath: row.bls_certificate_path,
+    aclsCertificatePath: row.acls_certificate_path,
+    documentVerdicts: row.document_verdicts,
     ...decrypted,
   };
 }
@@ -83,7 +99,9 @@ async function deleteSubmission(id) {
     .from(TABLE)
     .delete()
     .eq("id", id)
-    .select("driver_license_path, resume_path")
+    .select(
+      "driver_license_path, resume_path, degree_certificate_path, board_certificate_path, dea_certificate_path, professional_liability_path, state_medical_license_path, bls_certificate_path, acls_certificate_path",
+    )
     .maybeSingle();
 
   if (error) throw failed("delete the submission", error);
@@ -93,7 +111,6 @@ async function deleteSubmission(id) {
 
 module.exports = {
   createSubmission,
-  markQuickBooksSynced,
   listSubmissions,
   getSubmission,
   deleteSubmission,
