@@ -1,12 +1,14 @@
 const nodemailer = require("nodemailer");
 
+// Whether the transporter itself can be built at all — independent of
+// NOTIFY_EMAIL_TO, which only matters for the HR notification below, not for
+// sending an applicant a password reset link.
+function isSmtpConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
 function isConfigured() {
-  return Boolean(
-    process.env.SMTP_HOST &&
-      process.env.SMTP_USER &&
-      process.env.SMTP_PASS &&
-      process.env.NOTIFY_EMAIL_TO,
-  );
+  return isSmtpConfigured() && Boolean(process.env.NOTIFY_EMAIL_TO);
 }
 
 function createTransport() {
@@ -40,4 +42,21 @@ async function notifyNewSubmission({ firstName, lastName }) {
   });
 }
 
-module.exports = { notifyNewSubmission };
+async function sendPasswordResetEmail({ to, firstName, resetUrl }) {
+  if (!isSmtpConfigured()) {
+    throw new Error(
+      "SMTP isn't configured (see server/.env.example) — cannot send the password reset email.",
+    );
+  }
+
+  const transporter = createTransport();
+
+  await transporter.sendMail({
+    from: process.env.NOTIFY_EMAIL_FROM || process.env.SMTP_USER,
+    to,
+    subject: "Reset your ORCA Rehab onboarding password",
+    text: `Hi ${firstName},\n\nSomeone requested a password reset for your ORCA Rehab onboarding account. If this was you, click the link below to set a new password (this link expires in 1 hour):\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.`,
+  });
+}
+
+module.exports = { notifyNewSubmission, sendPasswordResetEmail };

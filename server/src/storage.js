@@ -164,4 +164,5 @@ module.exports = {
   resolveUploadedFile,
   downloadFile,
   deleteFiles,
+  signPath,
 };

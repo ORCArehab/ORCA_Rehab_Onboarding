@@ -62,7 +62,7 @@ function generatePdf(title, lines) {
 // Builds the credentialing document ZIP for one submission, matching ORCA's
 // existing manual folder structure:
 //
-//   {Last} {Role}, {First}- Non Billing/
+//   {Last} {Role}, {First} - Non Billing/
 //   └── Dr. {Last}'s Personal Folder/
 //       ├── 1. CAQH, NPPES, PECOS Login Information, NPI_{Last},{First}.pdf   (generated)
 //       ├── 2. Board Certificate_{Last},{First}.{ext}
@@ -85,7 +85,7 @@ async function buildCredentialingZip(submission) {
   const firstName = sanitizeForPath(employee.firstName);
   const personName = `${lastName},${firstName}`;
 
-  const rootFolderName = `${lastName} ${employee.providerRole}, ${firstName}- Non Billing`;
+  const rootFolderName = `${lastName} ${employee.providerRole}, ${firstName} - Non Billing`;
   const personalFolderName = `Dr. ${lastName}'s Personal Folder`;
 
   const zip = new JSZip();
@@ -118,7 +118,7 @@ async function buildCredentialingZip(submission) {
 
   await addUploadedFile(2, "Board Certificate", submission.boardCertificatePath);
 
-  const deaExpires = formatShortDate(employee.deaExpiration);
+  const deaExpires = formatShortDate(submission.documentVerdicts?.deaCertificate?.expirationDate);
   await addUploadedFile(
     3,
     `DEA Certificate${deaExpires ? ` Expires ${deaExpires}` : ""}`,
