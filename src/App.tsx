@@ -1,96 +1,171 @@
 import { useEffect, useState } from "react";
-import type { ChangeEvent, SubmitEvent, UIEvent } from "react";
+import type { SubmitEvent } from "react";
 import logo from "./assets/orca-logo.png";
-import policyPdf from "./assets/PolicyAgreement.pdf";
 import { API_BASE_URL } from "./apiConfig";
 import { uploadFile } from "./uploads";
+import type { UploadedFile } from "./uploads";
 import "./App.css";
 
-type Page =
-  | "welcome"
-  | "employee-info"
-  | "bank-info"
-  | "additional-info"
-  | "policy-agreement";
+type Page = "welcome" | "auth" | "forgot-password" | "reset-password" | "employee-info";
+
+interface ApplicantProfile {
+  firstName: string;
+  lastName: string;
+  email: string;
+  hasSubmitted: boolean;
+}
+
+type ApplicantAuthStatus = "checking" | "authenticated" | "unauthenticated";
+
+type ProviderRole = "" | "PA" | "NP" | "MD";
 
 interface EmployeeForm {
   firstName: string;
   lastName: string;
   dateOfBirth: string;
+  stateOfBirth: string;
   phone: string;
   address: string;
-  degree: string;
   ssn: string;
-  driverLicensePhoto: File | null;
-  resume: File | null;
-}
-
-interface BankAccountForm {
-  bankName: string;
-  accountType: string;
-  routingNumber: string;
-  accountNumber: string;
-}
-
-interface BankForm {
-  splitDeposit: boolean;
-  primaryAccount: BankAccountForm;
-  secondaryAccount: BankAccountForm;
-  primaryAllocation: string;
-}
-
-interface AdditionalForm {
-  emergencyContactName: string;
-  emergencyContactRelationship: string;
-  emergencyContactPhone: string;
-  workAuthorization: string;
-  filingStatus: string;
-  dependentsAmount: string;
-  extraWithholding: string;
+  providerRole: ProviderRole;
+  degree: string;
+  npi: string;
+  caqhUsername: string;
+  caqhPassword: string;
+  nppesUsername: string;
+  nppesPassword: string;
+  pecosUsername: string;
+  pecosPassword: string;
 }
 
 const initialForm: EmployeeForm = {
   firstName: "",
   lastName: "",
   dateOfBirth: "",
+  stateOfBirth: "",
   phone: "",
   address: "",
-  degree: "",
   ssn: "",
-  driverLicensePhoto: null,
-  resume: null,
+  providerRole: "",
+  degree: "",
+  npi: "",
+  caqhUsername: "",
+  caqhPassword: "",
+  nppesUsername: "",
+  nppesPassword: "",
+  pecosUsername: "",
+  pecosPassword: "",
 };
 
-const initialBankAccount: BankAccountForm = {
-  bankName: "",
-  accountType: "",
-  routingNumber: "",
-  accountNumber: "",
-};
+// The 6 credentialing documents that get AI-checked live as soon as they're
+// uploaded — see handleFileUpload. Keyed the same way the backend's
+// DOCUMENT_CHECKS map is (server/src/app.js), since the key doubles as the
+// `documentType` sent to POST /api/onboarding/verify-document.
+type CheckableDocKey =
+  | "degreeCertificate"
+  | "boardCertificate"
+  | "deaCertificate"
+  | "professionalLiability"
+  | "stateMedicalLicense"
+  | "blsCertificate"
+  | "aclsCertificate";
 
-const initialBankForm: BankForm = {
-  splitDeposit: false,
-  primaryAccount: { ...initialBankAccount },
-  secondaryAccount: { ...initialBankAccount },
-  primaryAllocation: "50",
-};
+// Driver's license and resume upload the same way but are never AI-checked.
+type UploadOnlyDocKey = "driverLicensePhoto" | "resume";
 
-const initialAdditionalForm: AdditionalForm = {
-  emergencyContactName: "",
-  emergencyContactRelationship: "",
-  emergencyContactPhone: "",
-  workAuthorization: "",
-  filingStatus: "",
-  dependentsAmount: "",
-  extraWithholding: "",
-};
+type AllDocKey = CheckableDocKey | UploadOnlyDocKey;
 
-interface PolicyForm {
-  fullName: string;
+type DocumentStatus =
+  | "uploading"
+  | "checking"
+  | "matches"
+  | "mismatch"
+  | "skipped"
+  | "error"
+  | "restored";
+
+interface DocumentUpload {
+  file: File;
+  uploaded: UploadedFile | null;
+  status: DocumentStatus;
+  reason?: string;
 }
 
-const initialPolicyForm: PolicyForm = {
-  fullName: "",
+type DocumentsState = Record<AllDocKey, DocumentUpload | null>;
+
+const initialDocuments: DocumentsState = {
+  driverLicensePhoto: null,
+  resume: null,
+  degreeCertificate: null,
+  boardCertificate: null,
+  deaCertificate: null,
+  professionalLiability: null,
+  stateMedicalLicense: null,
+  blsCertificate: null,
+  aclsCertificate: null,
+};
+
+const DOCUMENT_LABELS: Record<AllDocKey, string> = {
+  driverLicensePhoto: "driver's license photo",
+  resume: "resume",
+  degreeCertificate: "degree certificate",
+  boardCertificate: "board certificate",
+  deaCertificate: "DEA certificate",
+  professionalLiability: "professional liability document",
+  stateMedicalLicense: "state medical license",
+  blsCertificate: "BLS certificate",
+  aclsCertificate: "ACLS certificate",
+};
+
+const CHECKABLE_DOC_KEYS: CheckableDocKey[] = [
+  "degreeCertificate",
+  "boardCertificate",
+  "deaCertificate",
+  "professionalLiability",
+  "stateMedicalLicense",
+  "blsCertificate",
+  "aclsCertificate",
+];
+
+// ACLS is preferred but not required, so it's excluded from both the
+// AI-verification progress bar and the required-upload list below.
+const REQUIRED_DOCUMENT_KEYS: CheckableDocKey[] = [
+  "degreeCertificate",
+  "boardCertificate",
+  "deaCertificate",
+  "professionalLiability",
+  "stateMedicalLicense",
+  "blsCertificate",
+];
+
+const REQUIRED_UPLOAD_KEYS: AllDocKey[] = ["driverLicensePhoto", "resume", ...REQUIRED_DOCUMENT_KEYS];
+
+// Wire keys the backend's /submit and /applicant/draft routes expect —
+// "driverLicense", not "driverLicensePhoto".
+const FILE_WIRE_KEYS: Record<AllDocKey, string> = {
+  driverLicensePhoto: "driverLicense",
+  resume: "resume",
+  degreeCertificate: "degreeCertificate",
+  boardCertificate: "boardCertificate",
+  deaCertificate: "deaCertificate",
+  professionalLiability: "professionalLiability",
+  stateMedicalLicense: "stateMedicalLicense",
+  blsCertificate: "blsCertificate",
+  aclsCertificate: "aclsCertificate",
+};
+
+// Draft path-column keys the backend returns — mirrors DRAFT_FILE_RESOLUTION
+// in server/src/app.js.
+const DRAFT_PATH_KEYS: Record<AllDocKey, string> = {
+  driverLicensePhoto: "driverLicensePath",
+  resume: "resumePath",
+  degreeCertificate: "degreeCertificatePath",
+  boardCertificate: "boardCertificatePath",
+  deaCertificate: "deaCertificatePath",
+  professionalLiability: "professionalLiabilityPath",
+  stateMedicalLicense: "stateMedicalLicensePath",
+  blsCertificate: "blsCertificatePath",
+  aclsCertificate: "aclsCertificatePath",
 };
 
 function formatSSN(value: string): string {
@@ -104,10 +179,6 @@ function formatSSN(value: string): string {
   return `${numbers.slice(0, 3)}-${numbers.slice(3, 5)}-${numbers.slice(5)}`;
 }
 
-function formatDigits(value: string, maxLength: number): string {
-  return value.replace(/\D/g, "").slice(0, maxLength);
-}
-
 function formatPhone(value: string): string {
   const numbers = value.replace(/\D/g, "").slice(0, 10);
 
@@ -119,19 +190,65 @@ function formatPhone(value: string): string {
   return `(${numbers.slice(0, 3)}) ${numbers.slice(3, 6)}-${numbers.slice(6)}`;
 }
 
+function formatDigits(value: string, maxLength: number): string {
+  return value.replace(/\D/g, "").slice(0, maxLength);
+}
+
+function boardCertifyingBody(role: ProviderRole): string {
+  switch (role) {
+    case "PA":
+      return "NCCPA-certified.";
+    case "NP":
+      return "AANPCB or ANCC-certified.";
+    case "MD":
+      return "ABMS Specialty Board-certified (e.g. ABIM, ABFM, ABS).";
+    default:
+      return "Select your provider role above first.";
+  }
+}
+
+// Whatever /verify-document already returned for each document, live as it
+// was uploaded — sent along at submit/draft time so HR can see it in the
+// admin dashboard. Not re-checked server-side (that would just double the AI
+// cost). Only the 6 AI-checkable documents get a verdict entry.
+function buildDocumentVerdicts(documents: DocumentsState) {
+  const verdicts: Record<string, { matches: boolean; reason: string | null }> = {};
+
+  for (const key of CHECKABLE_DOC_KEYS) {
+    const doc = documents[key];
+    if (!doc || doc.status === "uploading" || doc.status === "checking") continue;
+
+    verdicts[key] = {
+      matches: doc.status === "matches" || doc.status === "skipped" || doc.status === "restored",
+      reason: doc.reason ?? null,
+    };
+  }
+
+  return verdicts;
+}
+
+function buildFilesPayload(documents: DocumentsState) {
+  const files: Record<string, UploadedFile | null> = {};
+
+  for (const key of Object.keys(FILE_WIRE_KEYS) as AllDocKey[]) {
+    files[FILE_WIRE_KEYS[key]] = documents[key]?.uploaded ?? null;
+  }
+
+  return files;
+}
+
 const DEV_PAGES: { label: string; page: Page; submitted?: boolean }[] = [
   { label: "Welcome", page: "welcome" },
   { label: "Employee info", page: "employee-info" },
-  { label: "Bank info", page: "bank-info" },
-  { label: "Additional info", page: "additional-info" },
-  { label: "Policy agreement", page: "policy-agreement" },
-  { label: "Success", page: "policy-agreement", submitted: true },
+  { label: "Success", page: "employee-info", submitted: true },
 ];
 
 function DevNav({
   onNavigate,
+  onLoadSample,
 }: {
   onNavigate: (page: Page, submitted: boolean) => void;
+  onLoadSample?: () => void;
 }) {
   if (!import.meta.env.DEV) return null;
 
@@ -147,103 +264,465 @@ function DevNav({
           {label}
         </button>
       ))}
+      {onLoadSample && (
+        <button type="button" onClick={onLoadSample}>
+          Load Sample: John Doe
+        </button>
+      )}
     </div>
   );
 }
 
-function BankAccountFields({
-  account,
-  onChange,
+function SectionHeader({
+  step,
+  total,
+  title,
+  description,
 }: {
-  account: BankAccountForm;
-  onChange: (field: keyof BankAccountForm, value: string) => void;
+  step: number;
+  total: number;
+  title: string;
+  description?: string;
 }) {
   return (
-    <div className="bank-account-fields">
-      <label className="form-field">
-        <span>Bank name</span>
-        <input
-          type="text"
-          autoComplete="off"
-          placeholder="Enter your bank's name"
-          value={account.bankName}
-          onChange={(event) => onChange("bankName", event.target.value)}
-          required
-        />
-      </label>
-
-      <label className="form-field">
-        <span>Account type</span>
-        <select
-          value={account.accountType}
-          onChange={(event) => onChange("accountType", event.target.value)}
-          required
-        >
-          <option value="" disabled>
-            Select account type
-          </option>
-          <option value="checking">Checking</option>
-          <option value="savings">Savings</option>
-        </select>
-      </label>
-
-      <div className="field-row">
-        <label className="form-field">
-          <span>Routing number</span>
-          <input
-            type="password"
-            inputMode="numeric"
-            autoComplete="off"
-            placeholder="9-digit routing number"
-            maxLength={9}
-            value={account.routingNumber}
-            onChange={(event) => onChange("routingNumber", event.target.value)}
-            required
-          />
-        </label>
-
-        <label className="form-field">
-          <span>Account number</span>
-          <input
-            type="password"
-            inputMode="numeric"
-            autoComplete="off"
-            placeholder="Account number"
-            maxLength={17}
-            value={account.accountNumber}
-            onChange={(event) => onChange("accountNumber", event.target.value)}
-            required
-          />
-        </label>
+    <div className="section-header">
+      <span className="section-header-step">{step}</span>
+      <div className="section-header-text">
+        <span className="section-header-eyebrow">
+          Step {step} of {total}
+        </span>
+        <span className="section-header-title">{title}</span>
+        {description && <span className="section-header-description">{description}</span>}
       </div>
     </div>
+  );
+}
+
+function DocumentField({
+  label,
+  hint,
+  required,
+  accept = ".pdf,image/*",
+  doc,
+  onFileSelected,
+}: {
+  label: string;
+  hint?: string;
+  required: boolean;
+  accept?: string;
+  doc: DocumentUpload | null;
+  onFileSelected: (file: File | null) => void;
+}) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!doc?.file || doc.file.size === 0 || !doc.file.type.startsWith("image/")) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const url = URL.createObjectURL(doc.file);
+    setPreviewUrl(url);
+
+    return () => URL.revokeObjectURL(url);
+  }, [doc]);
+
+  const isComplete =
+    doc?.status === "matches" || doc?.status === "restored" || doc?.status === "skipped";
+  const isPdf =
+    doc?.file.type === "application/pdf" || doc?.file.name.toLowerCase().endsWith(".pdf");
+
+  return (
+    <label className={`doc-tile${doc ? " has-file" : ""}${isComplete ? " is-complete" : ""}`}>
+      <div className="doc-tile-head">
+        <span className="doc-tile-label">{label}</span>
+        <span className={`doc-tile-tag ${required ? "required" : "preferred"}`}>
+          {required ? "Required" : "Preferred"}
+        </span>
+      </div>
+
+      <input
+        type="file"
+        className="doc-tile-input"
+        accept={accept}
+        onChange={(event) => onFileSelected(event.target.files?.[0] ?? null)}
+      />
+
+      <div className="doc-tile-preview">
+        {previewUrl ? (
+          <img src={previewUrl} alt="" />
+        ) : doc ? (
+          <div className="doc-tile-file-icon">{isPdf ? "PDF" : "DOC"}</div>
+        ) : (
+          <div className="doc-tile-empty">
+            <span className="doc-tile-empty-icon" aria-hidden="true">
+              ↑
+            </span>
+            <span>Click to upload</span>
+          </div>
+        )}
+      </div>
+
+      <span className="doc-tile-btn">{doc ? "Change file" : "Choose file"}</span>
+
+      {doc && <span className="doc-tile-filename">{doc.file.name}</span>}
+      {doc?.status === "uploading" && <span className="doc-status checking">Uploading…</span>}
+      {doc?.status === "checking" && (
+        <span className="doc-status checking">Checking document…</span>
+      )}
+      {doc?.status === "matches" && <span className="doc-status matches">✓ Looks correct</span>}
+      {doc?.status === "restored" && (
+        <span className="doc-status matches">✓ Previously uploaded</span>
+      )}
+      {(doc?.status === "mismatch" || doc?.status === "error") && (
+        <span className="doc-status mismatch">⚠ {doc.reason}</span>
+      )}
+
+      {hint && <small className="doc-tile-hint">{hint}</small>}
+      {!required && (
+        <small className="doc-tile-hint">
+          Preferred, but only required if your assigned facility needs it.
+        </small>
+      )}
+    </label>
+  );
+}
+
+function AuthPage({
+  mode,
+  onModeChange,
+  onSubmit,
+  onForgotPassword,
+  isSubmitting,
+  error,
+}: {
+  mode: "login" | "signup";
+  onModeChange: (mode: "login" | "signup") => void;
+  onSubmit: (event: SubmitEvent<HTMLFormElement>) => void;
+  onForgotPassword: () => void;
+  isSubmitting: boolean;
+  error: string | null;
+}) {
+  return (
+    <section className="form-card auth-card">
+      <p className="eyebrow">ORCA Rehab</p>
+      <h1>{mode === "login" ? "Log In" : "Create Your Account"}</h1>
+      <p className="welcome-description">
+        {mode === "login"
+          ? "Log in to continue your onboarding where you left off."
+          : "Your progress is saved automatically as you go, so you can pick up where you left off."}
+      </p>
+
+      <form className="employee-form" onSubmit={onSubmit}>
+        {mode === "signup" && (
+          <div className="field-row">
+            <label className="form-field">
+              <span>First name</span>
+              <input type="text" name="firstName" autoComplete="given-name" required />
+            </label>
+            <label className="form-field">
+              <span>Last name</span>
+              <input type="text" name="lastName" autoComplete="family-name" required />
+            </label>
+          </div>
+        )}
+
+        <label className="form-field">
+          <span>Email</span>
+          <input type="email" name="email" autoComplete="email" required />
+        </label>
+
+        <label className="form-field">
+          <span>Password</span>
+          <input
+            type="password"
+            name="password"
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
+            minLength={8}
+            required
+          />
+          {mode === "signup" && <small>At least 8 characters.</small>}
+        </label>
+
+        {mode === "login" && (
+          <button type="button" className="link-button" onClick={onForgotPassword}>
+            Forgot password?
+          </button>
+        )}
+
+        {error && <p className="auth-error">{error}</p>}
+
+        <div className="form-footer">
+          <button
+            type="button"
+            className="back-button"
+            onClick={() => onModeChange(mode === "login" ? "signup" : "login")}
+          >
+            {mode === "login" ? "Need an account? Sign up" : "Already have an account? Log in"}
+          </button>
+
+          <button className="primary-button" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Please wait…" : mode === "login" ? "Log in" : "Sign up"}
+            <span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function ForgotPasswordPage({
+  onSubmit,
+  onBack,
+  isSubmitting,
+  submitted,
+}: {
+  onSubmit: (email: string) => void;
+  onBack: () => void;
+  isSubmitting: boolean;
+  submitted: boolean;
+}) {
+  return (
+    <section className="form-card auth-card">
+      <p className="eyebrow">ORCA Rehab</p>
+      <h1>Reset Your Password</h1>
+
+      {submitted ? (
+        <>
+          <p className="welcome-description">
+            If an account exists for that email, we've sent a link to reset your
+            password. Check your inbox (and spam folder).
+          </p>
+          <button className="primary-button" type="button" onClick={onBack}>
+            Back to log in
+            <span aria-hidden="true">→</span>
+          </button>
+        </>
+      ) : (
+        <form
+          className="employee-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const email = String(new FormData(event.currentTarget).get("email") ?? "");
+            onSubmit(email);
+          }}
+        >
+          <label className="form-field">
+            <span>Email</span>
+            <input type="email" name="email" autoComplete="email" required />
+          </label>
+
+          <div className="form-footer">
+            <button type="button" className="back-button" onClick={onBack}>
+              ← Back to log in
+            </button>
+            <button className="primary-button" type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Sending…" : "Send reset link"}
+              <span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function ResetPasswordPage({
+  onSubmit,
+  isSubmitting,
+  error,
+  success,
+}: {
+  onSubmit: (newPassword: string) => void;
+  isSubmitting: boolean;
+  error: string | null;
+  success: boolean;
+}) {
+  return (
+    <section className="form-card auth-card">
+      <p className="eyebrow">ORCA Rehab</p>
+      <h1>Set a New Password</h1>
+
+      {success ? (
+        <p className="welcome-description">
+          Your password has been reset. You can now log in with your new password.
+        </p>
+      ) : (
+        <form
+          className="employee-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const newPassword = String(new FormData(event.currentTarget).get("newPassword") ?? "");
+            onSubmit(newPassword);
+          }}
+        >
+          <label className="form-field">
+            <span>New password</span>
+            <input
+              type="password"
+              name="newPassword"
+              autoComplete="new-password"
+              minLength={8}
+              required
+            />
+            <small>At least 8 characters.</small>
+          </label>
+
+          {error && <p className="auth-error">{error}</p>}
+
+          <div className="form-footer">
+            <button className="primary-button" type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Saving…" : "Set new password"}
+              <span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 
 function App() {
   const [page, setPage] = useState<Page>("welcome");
   const [form, setForm] = useState<EmployeeForm>(initialForm);
-  const [bankForm, setBankForm] = useState<BankForm>(initialBankForm);
-  const [additionalForm, setAdditionalForm] = useState<AdditionalForm>(
-    initialAdditionalForm,
-  );
-  const [policyForm, setPolicyForm] = useState<PolicyForm>(initialPolicyForm);
-  const [hasReadPolicy, setHasReadPolicy] = useState(false);
+  const [documents, setDocuments] = useState<DocumentsState>(initialDocuments);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [licensePreview, setLicensePreview] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!form.driverLicensePhoto) {
-      setLicensePreview(null);
+  const [applicantAuthStatus, setApplicantAuthStatus] = useState<ApplicantAuthStatus>("checking");
+  const [profile, setProfile] = useState<ApplicantProfile | null>(null);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  const [forgotPasswordSubmitting, setForgotPasswordSubmitting] = useState(false);
+  const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
+
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [resetSubmitting, setResetSubmitting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetSuccess, setResetSuccess] = useState(false);
+
+  function applyDraft(draft: {
+    employee: Partial<EmployeeForm>;
+    files: Record<string, UploadedFile | null>;
+    documentVerdicts: Record<string, { matches: boolean; reason: string | null }>;
+  }) {
+    setForm((currentForm) => ({ ...currentForm, ...draft.employee }));
+
+    setDocuments((docs) => {
+      const next = { ...docs };
+
+      for (const key of Object.keys(DRAFT_PATH_KEYS) as AllDocKey[]) {
+        const uploaded = draft.files[DRAFT_PATH_KEYS[key]];
+        if (!uploaded) continue;
+
+        const verdict = draft.documentVerdicts[key];
+        next[key] = {
+          file: new File([], uploaded.path.split("/").pop() || "uploaded-file"),
+          uploaded,
+          status: "restored",
+          reason: verdict?.reason ?? undefined,
+        };
+      }
+
+      return next;
+    });
+  }
+
+  async function loadSessionAndDraft() {
+    const sessionRes = await fetch(`${API_BASE_URL}/api/applicant/session`, {
+      credentials: "include",
+    });
+    const sessionData = await sessionRes.json();
+
+    if (!sessionData.authenticated) {
+      setApplicantAuthStatus("unauthenticated");
       return;
     }
 
-    const url = URL.createObjectURL(form.driverLicensePhoto);
-    setLicensePreview(url);
+    const nextProfile: ApplicantProfile = {
+      firstName: sessionData.firstName,
+      lastName: sessionData.lastName,
+      email: sessionData.email,
+      hasSubmitted: sessionData.hasSubmitted,
+    };
+    setProfile(nextProfile);
+    setApplicantAuthStatus("authenticated");
 
-    return () => URL.revokeObjectURL(url);
-  }, [form.driverLicensePhoto]);
+    // Pre-fill from the name they signed up with — the draft's own saved
+    // values (applied below, once there's anything to apply) take
+    // precedence over this if they've since edited it on the form itself.
+    setForm((currentForm) => ({
+      ...currentForm,
+      firstName: nextProfile.firstName,
+      lastName: nextProfile.lastName,
+    }));
+
+    if (nextProfile.hasSubmitted) {
+      setIsSubmitted(true);
+      setDraftLoaded(true);
+      setPage("employee-info");
+      return;
+    }
+
+    try {
+      const draftRes = await fetch(`${API_BASE_URL}/api/applicant/draft`, {
+        credentials: "include",
+      });
+      if (draftRes.ok) applyDraft(await draftRes.json());
+    } catch (error) {
+      console.error("Failed to load draft:", error);
+    } finally {
+      setDraftLoaded(true);
+      setPage("employee-info");
+    }
+  }
+
+  // On mount: a password-reset link takes priority over the normal session
+  // check — someone can click a reset link while still logged in elsewhere.
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("reset-token");
+
+    if (token) {
+      setResetToken(token);
+      setPage("reset-password");
+      setApplicantAuthStatus("unauthenticated");
+      return;
+    }
+
+    loadSessionAndDraft().catch((error) => {
+      console.error("Failed to check session:", error);
+      setApplicantAuthStatus("unauthenticated");
+    });
+    // Only ever runs once, on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-save: debounced so it doesn't fire on every keystroke. Gated on
+  // draftLoaded so it can never fire before an existing draft has finished
+  // loading (which would otherwise overwrite it with blank fields).
+  useEffect(() => {
+    if (!draftLoaded || applicantAuthStatus !== "authenticated" || profile?.hasSubmitted) return;
+
+    const timeout = setTimeout(() => {
+      fetch(`${API_BASE_URL}/api/applicant/draft`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee: form,
+          files: buildFilesPayload(documents),
+          documentVerdicts: buildDocumentVerdicts(documents),
+        }),
+      }).catch((error) => console.error("Auto-save failed:", error));
+    }, 1500);
+
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, documents, draftLoaded, applicantAuthStatus]);
 
   const updateField = (field: keyof EmployeeForm, value: string) => {
     setForm((currentForm) => ({
@@ -253,78 +732,96 @@ function App() {
           ? formatSSN(value)
           : field === "phone"
             ? formatPhone(value)
-            : value,
-    }));
-  };
-
-  const updateBankAccountField = (
-    account: "primaryAccount" | "secondaryAccount",
-    field: keyof BankAccountForm,
-    value: string,
-  ) => {
-    setBankForm((currentForm) => ({
-      ...currentForm,
-      [account]: {
-        ...currentForm[account],
-        [field]:
-          field === "routingNumber"
-            ? formatDigits(value, 9)
-            : field === "accountNumber"
-              ? formatDigits(value, 17)
+            : field === "npi"
+              ? formatDigits(value, 10)
               : value,
-      },
     }));
   };
 
-  const toggleSplitDeposit = () => {
-    setBankForm((currentForm) => ({
-      ...currentForm,
-      splitDeposit: !currentForm.splitDeposit,
-    }));
-  };
+  // Uploads a document the moment it's chosen. The 6 credentialing documents
+  // also get AI-checked immediately after — this is what powers the live
+  // checkmark. Driver's license/resume upload the same way but skip
+  // verification (verify: false).
+  const handleFileUpload =
+    (key: AllDocKey, verify: boolean) => async (file: File | null) => {
+      if (!file) {
+        setDocuments((docs) => ({ ...docs, [key]: null }));
+        return;
+      }
 
-  const updatePrimaryAllocation = (value: string) => {
-    const digits = formatDigits(value, 3);
-    const capped = digits === "" ? "" : String(Math.min(Number(digits), 100));
+      setDocuments((docs) => ({ ...docs, [key]: { file, uploaded: null, status: "uploading" } }));
 
-    setBankForm((currentForm) => ({
-      ...currentForm,
-      primaryAllocation: capped,
-    }));
-  };
+      try {
+        const uploaded = await uploadFile(file);
 
-  const updateAdditionalField = (
-    field: keyof AdditionalForm,
-    value: string,
-  ) => {
-    setAdditionalForm((currentForm) => ({
-      ...currentForm,
-      [field]:
-        field === "emergencyContactPhone"
-          ? formatPhone(value)
-          : field === "dependentsAmount" || field === "extraWithholding"
-            ? formatDigits(value, 6)
-            : value,
-    }));
-  };
+        if (!verify) {
+          setDocuments((docs) =>
+            docs[key]?.file === file ? { ...docs, [key]: { file, uploaded, status: "skipped" } } : docs,
+          );
+          return;
+        }
 
-  const handleLicenseChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null;
-    setForm((currentForm) => ({
-      ...currentForm,
-      driverLicensePhoto: file,
-    }));
-  };
+        setDocuments((docs) =>
+          docs[key]?.file === file
+            ? { ...docs, [key]: { file, uploaded, status: "checking" } }
+            : docs,
+        );
 
-  const handleResumeChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null;
-    setForm((currentForm) => ({
-      ...currentForm,
-      resume: file,
-    }));
-  };
+        const response = await fetch(`${API_BASE_URL}/api/onboarding/verify-document`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file: uploaded, documentType: key }),
+        });
 
-  const handleEmployeeSubmit = (event: SubmitEvent<HTMLFormElement>) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error ?? "Could not verify this document.");
+        }
+
+        const verdict: { matches: boolean; reason: string; skipped?: boolean } = await response.json();
+
+        setDocuments((docs) =>
+          docs[key]?.file === file
+            ? {
+                ...docs,
+                [key]: {
+                  file,
+                  uploaded,
+                  status: verdict.skipped ? "skipped" : verdict.matches ? "matches" : "mismatch",
+                  reason: verdict.reason,
+                },
+              }
+            : docs,
+        );
+      } catch (error) {
+        console.error(`Failed to upload/verify ${key}:`, error);
+
+        setDocuments((docs) =>
+          docs[key]?.file === file
+            ? {
+                ...docs,
+                [key]: {
+                  file,
+                  uploaded: docs[key]?.uploaded ?? null,
+                  status: "error",
+                  reason: "Could not upload or verify this document. Please try again.",
+                },
+              }
+            : docs,
+        );
+      }
+    };
+
+  const verifiedRequiredCount = REQUIRED_DOCUMENT_KEYS.filter((key) => {
+    const status = documents[key]?.status;
+    return status === "matches" || status === "skipped" || status === "restored";
+  }).length;
+
+  const progressPercent = Math.round(
+    (verifiedRequiredCount / REQUIRED_DOCUMENT_KEYS.length) * 100,
+  );
+
+  const handleEmployeeSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const [dobYear] = form.dateOfBirth.split("-");
@@ -337,6 +834,11 @@ function App() {
       Number(dobYear) > currentYear - 14
     ) {
       alert("Please enter a valid date of birth.");
+      return;
+    }
+
+    if (!form.stateOfBirth.trim()) {
+      alert("Please enter your state of birth.");
       return;
     }
 
@@ -354,148 +856,78 @@ function App() {
       return;
     }
 
-    if (!form.driverLicensePhoto) {
-      alert("Please attach a photo of your driver's license.");
+    if (!form.providerRole) {
+      alert("Please select your provider role.");
       return;
     }
 
-    if (!form.resume) {
-      alert("Please attach your resume.");
+    if (form.npi.length !== 10) {
+      alert("Please enter a valid 10-digit NPI.");
       return;
     }
 
-    // Replace this with a secure request to your backend.
-    // Never save an SSN in localStorage or sessionStorage.
-    console.log({
-      ...form,
-      ssn: ssnNumbers,
-    });
-
-    setPage("bank-info");
-  };
-
-  const handleBankSubmit = (event: SubmitEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (bankForm.primaryAccount.routingNumber.length !== 9) {
-      alert("Please enter a valid 9-digit routing number.");
-      return;
-    }
-
-    if (bankForm.primaryAccount.accountNumber.length < 4) {
-      alert("Please enter a valid account number.");
-      return;
-    }
-
-    if (bankForm.splitDeposit) {
-      if (bankForm.secondaryAccount.routingNumber.length !== 9) {
-        alert("Please enter a valid 9-digit routing number for account 2.");
-        return;
-      }
-
-      if (bankForm.secondaryAccount.accountNumber.length < 4) {
-        alert("Please enter a valid account number for account 2.");
-        return;
-      }
-
-      const allocation = Number(bankForm.primaryAllocation);
-
-      if (!allocation || allocation < 1 || allocation > 99) {
-        alert("Please enter a split percentage between 1 and 99 for account 1.");
+    for (const [label, value] of [
+      ["CAQH username", form.caqhUsername],
+      ["CAQH password", form.caqhPassword],
+      ["NPPES username", form.nppesUsername],
+      ["NPPES password", form.nppesPassword],
+      ["PECOS username", form.pecosUsername],
+      ["PECOS password", form.pecosPassword],
+    ] as const) {
+      if (!value.trim()) {
+        alert(`Please enter your ${label}.`);
         return;
       }
     }
 
-    // Replace this with a secure request to your backend.
-    // Never save bank account details in localStorage or sessionStorage.
-    console.log(bankForm);
+    for (const key of REQUIRED_UPLOAD_KEYS) {
+      const doc = documents[key];
+      const label = DOCUMENT_LABELS[key];
 
-    setPage("additional-info");
-  };
+      if (!doc) {
+        alert(`Please attach your ${label}.`);
+        return;
+      }
 
-  const handleAdditionalSubmit = (event: SubmitEvent<HTMLFormElement>) => {
-    event.preventDefault();
+      if (doc.status === "uploading" || doc.status === "checking") {
+        alert(`Please wait for your ${label} to finish uploading.`);
+        return;
+      }
 
-    const emergencyPhoneNumbers = additionalForm.emergencyContactPhone.replace(
-      /\D/g,
-      "",
-    );
-
-    if (emergencyPhoneNumbers.length !== 10) {
-      alert("Please enter a valid 10-digit emergency contact phone number.");
-      return;
-    }
-
-    if (!additionalForm.workAuthorization) {
-      alert("Please select your work authorization status.");
-      return;
-    }
-
-    if (!additionalForm.filingStatus) {
-      alert("Please select your tax filing status.");
-      return;
-    }
-
-    setPage("policy-agreement");
-  };
-
-  const handlePolicyScroll = (event: UIEvent<HTMLDivElement>) => {
-    const target = event.currentTarget;
-
-    if (target.scrollHeight - target.scrollTop - target.clientHeight < 16) {
-      setHasReadPolicy(true);
-    }
-  };
-
-  const handlePolicySubmit = async (event: SubmitEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (!hasReadPolicy) {
-      alert("Please scroll through the entire policy before signing.");
-      return;
-    }
-
-    const expectedName = `${form.firstName} ${form.lastName}`.trim().toLowerCase();
-    const typedName = policyForm.fullName.trim().toLowerCase();
-
-    if (typedName !== expectedName) {
-      alert(
-        "Please type your full legal name exactly as entered in Step 1 to sign.",
-      );
-      return;
+      if (doc.status === "mismatch" || doc.status === "error") {
+        alert(`Please fix your ${label} before submitting: ${doc.reason ?? "it doesn't look right."}`);
+        return;
+      }
     }
 
     setIsSubmitting(true);
 
     try {
-      // Files go straight to Supabase Storage first, in parallel. Only the
-      // resulting paths are sent to our backend, which keeps the submission
-      // request small enough for any host's body size limit.
-      const [driverLicense, resume] = await Promise.all([
-        form.driverLicensePhoto ? uploadFile(form.driverLicensePhoto) : null,
-        form.resume ? uploadFile(form.resume) : null,
-      ]);
-
       const response = await fetch(`${API_BASE_URL}/api/onboarding/submit`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           employee: {
             firstName: form.firstName,
             lastName: form.lastName,
             dateOfBirth: form.dateOfBirth,
-            phone: form.phone.replace(/\D/g, ""),
+            stateOfBirth: form.stateOfBirth,
+            phone: phoneNumbers,
             address: form.address,
+            ssn: ssnNumbers,
+            providerRole: form.providerRole,
             degree: form.degree,
-            ssn: form.ssn.replace(/\D/g, ""),
+            npi: form.npi,
+            caqhUsername: form.caqhUsername,
+            caqhPassword: form.caqhPassword,
+            nppesUsername: form.nppesUsername,
+            nppesPassword: form.nppesPassword,
+            pecosUsername: form.pecosUsername,
+            pecosPassword: form.pecosPassword,
           },
-          bank: bankForm,
-          additional: additionalForm,
-          policy: {
-            fullName: policyForm.fullName.trim(),
-            signedAt: new Date().toISOString(),
-          },
-          files: { driverLicense, resume },
+          files: buildFilesPayload(documents),
+          documentVerdicts: buildDocumentVerdicts(documents),
         }),
       });
 
@@ -505,6 +937,7 @@ function App() {
       }
 
       setIsSubmitted(true);
+      setProfile((current) => (current ? { ...current, hasSubmitted: true } : current));
     } catch (error) {
       console.error("Failed to submit onboarding data:", error);
 
@@ -529,10 +962,200 @@ function App() {
     setIsSubmitted(submitted);
   };
 
+  const handleAuthSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthError(null);
+    setAuthSubmitting(true);
+
+    const formData = new FormData(event.currentTarget);
+    const email = String(formData.get("email") ?? "");
+    const password = String(formData.get("password") ?? "");
+
+    try {
+      const endpoint = authMode === "signup" ? "signup" : "login";
+      const body =
+        authMode === "signup"
+          ? {
+              firstName: String(formData.get("firstName") ?? ""),
+              lastName: String(formData.get("lastName") ?? ""),
+              email,
+              password,
+            }
+          : { email, password };
+
+      const response = await fetch(`${API_BASE_URL}/api/applicant/${endpoint}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const responseBody = await response.json().catch(() => null);
+        throw new Error(responseBody?.error ?? "Something went wrong. Please try again.");
+      }
+
+      await loadSessionAndDraft();
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Something went wrong.");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleForgotPasswordSubmit = async (email: string) => {
+    setForgotPasswordSubmitting(true);
+
+    try {
+      await fetch(`${API_BASE_URL}/api/applicant/forgot-password`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+    } catch (error) {
+      console.error("Failed to request password reset:", error);
+    } finally {
+      setForgotPasswordSubmitting(false);
+      setForgotPasswordSent(true);
+    }
+  };
+
+  const handleResetPasswordSubmit = async (newPassword: string) => {
+    setResetError(null);
+    setResetSubmitting(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/applicant/reset-password`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: resetToken, newPassword }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error ?? "Could not reset your password.");
+      }
+
+      setResetSuccess(true);
+    } catch (error) {
+      setResetError(error instanceof Error ? error.message : "Something went wrong.");
+    } finally {
+      setResetSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/api/applicant/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (error) {
+      console.error("Failed to log out:", error);
+    }
+
+    setProfile(null);
+    setApplicantAuthStatus("unauthenticated");
+    setForm(initialForm);
+    setDocuments(initialDocuments);
+    setDraftLoaded(false);
+    setIsSubmitted(false);
+    setPage("welcome");
+  };
+
+  // Loads John Doe's fixed sample documents (server/sample-data/john-doe/)
+  // through the exact same code path as picking a file by hand, so this
+  // exercises the real upload + AI verification pipeline end-to-end.
+  const handleLoadSample = async () => {
+    setPage("employee-info");
+    setIsSubmitted(false);
+
+    setForm((currentForm) => ({
+      ...currentForm,
+      firstName: "John",
+      lastName: "Doe",
+      dateOfBirth: "1985-06-15",
+      stateOfBirth: "California",
+      phone: "5551234567",
+      address: "123 Sample St, Anaheim, CA 92805",
+      ssn: "123456789",
+      providerRole: "MD",
+      degree: "Doctor of Medicine",
+      npi: "1234567890",
+      caqhUsername: "johndoe_caqh",
+      caqhPassword: "SamplePassword123",
+      nppesUsername: "johndoe_nppes",
+      nppesPassword: "SamplePassword123",
+      pecosUsername: "johndoe_pecos",
+      pecosPassword: "SamplePassword123",
+    }));
+
+    async function fetchSampleFile(filename: string): Promise<File> {
+      const response = await fetch(`${API_BASE_URL}/api/dev/sample-employee/${filename}`);
+      if (!response.ok) throw new Error(`Could not load sample file ${filename}`);
+      const blob = await response.blob();
+      return new File([blob], filename, { type: "application/pdf" });
+    }
+
+    // Uploads a sample file for real (exercises Supabase Storage) but skips
+    // the AI check and marks it verified directly. Several of John Doe's
+    // sample PDFs contain their own "this is a synthetic test document, not
+    // a real DEA certificate" disclaimer text, which the AI correctly reads
+    // and flags — appropriate for a real submission, but it would make this
+    // one-click fixture unable to ever reach Submit. This keeps the sample
+    // reliably usable while being explicit in the UI that it wasn't really
+    // checked.
+    async function loadSampleDocument(key: AllDocKey, filename: string) {
+      const file = await fetchSampleFile(filename);
+      setDocuments((docs) => ({ ...docs, [key]: { file, uploaded: null, status: "uploading" } }));
+
+      try {
+        const uploaded = await uploadFile(file);
+        setDocuments((docs) => ({
+          ...docs,
+          [key]: {
+            file,
+            uploaded,
+            status: "matches",
+            reason: "Sample document — AI verification skipped for this test fixture.",
+          },
+        }));
+      } catch (error) {
+        console.error(`Failed to upload sample ${key}:`, error);
+        setDocuments((docs) => ({
+          ...docs,
+          [key]: { file, uploaded: null, status: "error", reason: "Could not upload this sample file." },
+        }));
+      }
+    }
+
+    try {
+      const documentFiles: [AllDocKey, string][] = [
+        ["driverLicensePhoto", "driver-license.pdf"],
+        ["resume", "resume.pdf"],
+        ["degreeCertificate", "degree-certificate.pdf"],
+        ["boardCertificate", "board-certificate.pdf"],
+        ["deaCertificate", "dea-certificate.pdf"],
+        ["professionalLiability", "professional-liability.pdf"],
+        ["stateMedicalLicense", "state-license.pdf"],
+        ["blsCertificate", "bls-certificate.pdf"],
+      ];
+
+      await Promise.all(documentFiles.map(([key, filename]) => loadSampleDocument(key, filename)));
+    } catch (error) {
+      console.error("Failed to load sample employee:", error);
+      alert(
+        "Could not load John Doe's sample files. Make sure the backend server is running.",
+      );
+    }
+  };
+
   if (page === "welcome") {
     return (
       <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} />
+        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
         <section className="welcome-card">
           <img
             className="welcome-logo"
@@ -544,7 +1167,7 @@ function App() {
             <p className="eyebrow">NEW EMPLOYEE PORTAL</p>
 
             <h1>
-              Welcome to <span>ORCA REHAB</span>
+              Welcome to <span>ORCA Rehab</span>
             </h1>
 
             <p className="welcome-description">
@@ -556,7 +1179,10 @@ function App() {
             <button
               className="primary-button"
               type="button"
-              onClick={() => setPage("employee-info")}
+              disabled={applicantAuthStatus === "checking"}
+              onClick={() =>
+                setPage(applicantAuthStatus === "authenticated" ? "employee-info" : "auth")
+              }
             >
               Continue
               <span aria-hidden="true">→</span>
@@ -571,754 +1197,71 @@ function App() {
     );
   }
 
+  if (page === "auth") {
+    return (
+      <main className="app-shell">
+        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
+        <AuthPage
+          mode={authMode}
+          onModeChange={(mode) => {
+            setAuthMode(mode);
+            setAuthError(null);
+          }}
+          onSubmit={handleAuthSubmit}
+          onForgotPassword={() => {
+            setForgotPasswordSent(false);
+            setPage("forgot-password");
+          }}
+          isSubmitting={authSubmitting}
+          error={authError}
+        />
+      </main>
+    );
+  }
+
+  if (page === "forgot-password") {
+    return (
+      <main className="app-shell">
+        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
+        <ForgotPasswordPage
+          onSubmit={handleForgotPasswordSubmit}
+          onBack={() => {
+            setAuthMode("login");
+            setPage("auth");
+          }}
+          isSubmitting={forgotPasswordSubmitting}
+          submitted={forgotPasswordSent}
+        />
+      </main>
+    );
+  }
+
+  if (page === "reset-password") {
+    return (
+      <main className="app-shell">
+        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
+        <ResetPasswordPage
+          onSubmit={handleResetPasswordSubmit}
+          isSubmitting={resetSubmitting}
+          error={resetError}
+          success={resetSuccess}
+        />
+      </main>
+    );
+  }
+
   if (isSubmitted) {
     return (
       <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} />
+        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
         <section className="form-card success-card">
           <div className="success-icon">✓</div>
           <p className="eyebrow">INFORMATION RECEIVED</p>
-          <h1>Thank you, {form.firstName}.</h1>
+          <h1>Thank you, {form.firstName || profile?.firstName}.</h1>
           <p>
-            Your employee, banking, and additional information has been
-            submitted, and your policy agreement has been signed. Our team
-            will follow up with the next steps of onboarding.
+            Your employee information has been submitted. Our team will
+            follow up with the next steps of onboarding.
           </p>
-        </section>
-      </main>
-    );
-  }
-
-  if (page === "bank-info") {
-    return (
-      <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} />
-        <section className="form-card">
-          <button
-            className="back-button"
-            type="button"
-            onClick={() => setPage("employee-info")}
-          >
-            ← Back
-          </button>
-
-          <header className="form-header">
-            <img className="form-logo" src={logo} alt="ORCA Rehab" />
-
-            <div>
-              <p className="eyebrow">STEP 2 OF 4</p>
-              <h1>Direct Deposit Information</h1>
-              <p>
-                Please enter your bank account details for direct deposit
-                payroll setup.
-              </p>
-            </div>
-          </header>
-
-          <div className="progress-track" aria-label="Onboarding progress">
-            <div className="progress-value" style={{ width: "50%" }} />
-          </div>
-
-          <form className="employee-form" onSubmit={handleBankSubmit}>
-            <label className="toggle-row">
-              <span className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={bankForm.splitDeposit}
-                  onChange={toggleSplitDeposit}
-                />
-                <span className="toggle-track">
-                  <span className="toggle-thumb" />
-                </span>
-              </span>
-              <span className="toggle-label">
-                Split my paycheck between two accounts
-              </span>
-            </label>
-
-            {bankForm.splitDeposit && <p className="account-label">Account 1</p>}
-
-            <BankAccountFields
-              account={bankForm.primaryAccount}
-              onChange={(field, value) =>
-                updateBankAccountField("primaryAccount", field, value)
-              }
-            />
-
-            {bankForm.splitDeposit && (
-              <>
-                <label className="form-field">
-                  <span>Percentage to Account 1</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="e.g. 50"
-                    maxLength={3}
-                    value={bankForm.primaryAllocation}
-                    onChange={(event) =>
-                      updatePrimaryAllocation(event.target.value)
-                    }
-                    required
-                  />
-                  <small>
-                    Account 2 will receive the remaining{" "}
-                    {bankForm.primaryAllocation
-                      ? 100 - Number(bankForm.primaryAllocation)
-                      : 0}
-                    %.
-                  </small>
-                </label>
-
-                <p className="account-label">Account 2</p>
-
-                <BankAccountFields
-                  account={bankForm.secondaryAccount}
-                  onChange={(field, value) =>
-                    updateBankAccountField("secondaryAccount", field, value)
-                  }
-                />
-              </>
-            )}
-
-            <div className="form-footer">
-              <p>All fields are required.</p>
-
-              <button className="primary-button" type="submit">
-                Continue
-                <span aria-hidden="true">→</span>
-              </button>
-            </div>
-          </form>
-        </section>
-      </main>
-    );
-  }
-
-  if (page === "additional-info") {
-    return (
-      <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} />
-        <section className="form-card">
-          <button
-            className="back-button"
-            type="button"
-            onClick={() => setPage("bank-info")}
-          >
-            ← Back
-          </button>
-
-          <header className="form-header">
-            <img className="form-logo" src={logo} alt="ORCA Rehab" />
-
-            <div>
-              <p className="eyebrow">STEP 3 OF 4</p>
-              <h1>Additional Information</h1>
-              <p>
-                A few more required details: emergency contact, work
-                eligibility, and tax withholding.
-              </p>
-            </div>
-          </header>
-
-          <div className="progress-track" aria-label="Onboarding progress">
-            <div className="progress-value" style={{ width: "75%" }} />
-          </div>
-
-          <form className="employee-form" onSubmit={handleAdditionalSubmit}>
-            <p className="account-label">Emergency contact</p>
-
-            <div className="field-row">
-              <label className="form-field">
-                <span>Contact name</span>
-                <input
-                  type="text"
-                  autoComplete="off"
-                  placeholder="Full name"
-                  value={additionalForm.emergencyContactName}
-                  onChange={(event) =>
-                    updateAdditionalField(
-                      "emergencyContactName",
-                      event.target.value,
-                    )
-                  }
-                  required
-                />
-              </label>
-
-              <label className="form-field">
-                <span>Relationship</span>
-                <input
-                  type="text"
-                  autoComplete="off"
-                  placeholder="e.g. Spouse, Parent"
-                  value={additionalForm.emergencyContactRelationship}
-                  onChange={(event) =>
-                    updateAdditionalField(
-                      "emergencyContactRelationship",
-                      event.target.value,
-                    )
-                  }
-                  required
-                />
-              </label>
-            </div>
-
-            <label className="form-field">
-              <span>Contact phone number</span>
-              <input
-                type="tel"
-                inputMode="tel"
-                autoComplete="off"
-                placeholder="(555) 123-4567"
-                maxLength={14}
-                value={additionalForm.emergencyContactPhone}
-                onChange={(event) =>
-                  updateAdditionalField(
-                    "emergencyContactPhone",
-                    event.target.value,
-                  )
-                }
-                required
-              />
-            </label>
-
-            <p className="account-label">Work authorization (Form I-9)</p>
-
-            <label className="form-field">
-              <span>Citizenship / work authorization status</span>
-              <select
-                value={additionalForm.workAuthorization}
-                onChange={(event) =>
-                  updateAdditionalField("workAuthorization", event.target.value)
-                }
-                required
-              >
-                <option value="" disabled>
-                  Select your status
-                </option>
-                <option value="citizen">U.S. citizen</option>
-                <option value="national">U.S. national</option>
-                <option value="permanent-resident">
-                  Lawful permanent resident
-                </option>
-                <option value="authorized-alien">
-                  Alien authorized to work
-                </option>
-              </select>
-            </label>
-
-            <p className="account-label">Tax withholding (Form W-4)</p>
-
-            <label className="form-field">
-              <span>Filing status</span>
-              <select
-                value={additionalForm.filingStatus}
-                onChange={(event) =>
-                  updateAdditionalField("filingStatus", event.target.value)
-                }
-                required
-              >
-                <option value="" disabled>
-                  Select your filing status
-                </option>
-                <option value="single">
-                  Single or married filing separately
-                </option>
-                <option value="married-filing-jointly">
-                  Married filing jointly
-                </option>
-                <option value="head-of-household">Head of household</option>
-              </select>
-            </label>
-
-            <div className="field-row">
-              <label className="form-field">
-                <span>Dependents amount ($)</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="e.g. 2000"
-                  value={additionalForm.dependentsAmount}
-                  onChange={(event) =>
-                    updateAdditionalField(
-                      "dependentsAmount",
-                      event.target.value,
-                    )
-                  }
-                />
-              </label>
-
-              <label className="form-field">
-                <span>Extra withholding per paycheck ($)</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="e.g. 50"
-                  value={additionalForm.extraWithholding}
-                  onChange={(event) =>
-                    updateAdditionalField(
-                      "extraWithholding",
-                      event.target.value,
-                    )
-                  }
-                />
-              </label>
-            </div>
-
-            <div className="form-footer">
-              <p>Fields marked required must be completed.</p>
-
-              <button className="primary-button" type="submit">
-                Continue
-                <span aria-hidden="true">→</span>
-              </button>
-            </div>
-          </form>
-        </section>
-      </main>
-    );
-  }
-
-  if (page === "policy-agreement") {
-    return (
-      <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} />
-        <section className="form-card">
-          <button
-            className="back-button"
-            type="button"
-            onClick={() => setPage("additional-info")}
-          >
-            ← Back
-          </button>
-
-          <header className="form-header">
-            <img className="form-logo" src={logo} alt="ORCA Rehab" />
-
-            <div>
-              <p className="eyebrow">STEP 4 OF 4</p>
-              <h1>Policy Agreement</h1>
-              <p>
-                Please read the full policy below before signing. You must
-                scroll to the end to continue.
-              </p>
-            </div>
-          </header>
-
-          <div className="progress-track" aria-label="Onboarding progress">
-            <div className="progress-value" style={{ width: "100%" }} />
-          </div>
-
-          <form className="employee-form" onSubmit={handlePolicySubmit}>
-            <a
-              className="policy-download-link"
-              href={policyPdf}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Download a copy (PDF)
-            </a>
-
-            <div className="policy-scroll-box" onScroll={handlePolicyScroll}>
-              <div className="policy-text">
-                <h2>ORCA Rehab, Inc.</h2>
-                <h3>Holiday, Paid Time-Off, and Paid Sick Leave Policy</h3>
-
-                <p>
-                  <strong>Approved:</strong> June 18, 2026
-                  <br />
-                  <strong>Approved by:</strong> ORCA Management
-                  <br />
-                  <strong>Effective date:</strong> June 18, 2026
-                  <br />
-                  <strong>Supersedes:</strong> Any prior holiday, paid time
-                  off, or paid sick leave policy
-                </p>
-
-                <h4>Purpose</h4>
-                <p>
-                  ORCA Rehab, Inc. recognizes the importance of providing
-                  employees and providers with time to observe holidays,
-                  spend time with family, attend to personal needs, and
-                  maintain work-life balance.
-                </p>
-                <p>
-                  As an inpatient rehabilitation practice, ORCA Rehab also has
-                  an ongoing responsibility to maintain continuity of patient
-                  care. Patients remain in hospitals, skilled nursing
-                  facilities, and other care settings during holidays and
-                  continue to require timely evaluation, treatment,
-                  coordination, and provider oversight. Because hospitals and
-                  patient care facilities do not close on holidays, ORCA
-                  Rehab must maintain scheduling flexibility to support
-                  patient care, meet facility expectations, and ensure
-                  continuity of operations.
-                </p>
-                <p>
-                  This policy outlines holiday observance, paid time off, and
-                  paid sick leave guidelines for eligible office staff,
-                  hospital-based providers, non-hospital providers, and other
-                  eligible employees.
-                </p>
-
-                <h4>I. Recognized ORCA Holidays</h4>
-                <p>ORCA Rehab recognizes the following six paid holidays:</p>
-                <ul>
-                  <li>New Year's Day</li>
-                  <li>Memorial Day</li>
-                  <li>Independence Day</li>
-                  <li>Labor Day</li>
-                  <li>Thanksgiving Day</li>
-                  <li>Christmas Day</li>
-                </ul>
-                <p>
-                  ORCA Rehab reserves the right to modify recognized
-                  holidays, scheduling practices, coverage assignments, or
-                  holiday procedures based on operational needs, patient care
-                  needs, facility requirements, and applicable law.
-                </p>
-
-                <h4>II. Office Staff Holiday Policy</h4>
-                <p>
-                  Eligible full-time office staff are entitled to six (6)
-                  paid holidays per calendar year from the recognized holiday
-                  list above.
-                </p>
-                <p>
-                  Christmas Eve, New Year's Eve, and the Friday after
-                  Thanksgiving are not additional paid holidays. However,
-                  office staff may be permitted to work remotely from home on
-                  those days, subject to operational needs and management
-                  approval.
-                </p>
-                <p>
-                  If a recognized ORCA holiday falls on a Saturday or Sunday,
-                  ORCA Rehab may designate an observed holiday for eligible
-                  full-time office staff, generally on the preceding Friday
-                  or following Monday, subject to operational needs and
-                  management approval.
-                </p>
-                <p>
-                  Employees are not eligible to receive duplicate holiday
-                  benefits for the same recognized ORCA holiday unless
-                  specifically approved by ORCA management.
-                </p>
-
-                <h4>III. Hospital-Based Provider Holiday Policy</h4>
-                <p>
-                  Because patient care responsibilities vary by facility,
-                  holiday scheduling for hospital-based providers is
-                  determined in coordination with each hospital's
-                  operational requirements, patient care needs, provider
-                  availability, and ORCA leadership direction.
-                </p>
-                <p>
-                  <strong>
-                    A. Providers Assigned to Providence St. Jude, St. Joseph,
-                    and St. Mary
-                  </strong>
-                  <br />
-                  Providers assigned to Providence St. Jude, St. Joseph, and
-                  St. Mary are expected to rotate holiday coverage with other
-                  providers assigned to the facility. Coverage schedules will
-                  be arranged by ORCA leadership in a professional and fair
-                  manner to maintain uninterrupted patient care.
-                </p>
-                <p>
-                  If a provider is assigned and provides clinical coverage on
-                  a recognized ORCA holiday, ORCA Rehab may grant one (1)
-                  equivalent PTO day, subject to scheduling approval, patient
-                  care needs, facility coverage needs, and operational
-                  requirements.
-                </p>
-                <p>
-                  In addition to the six recognized ORCA holidays listed
-                  above, providers who are assigned and provide clinical
-                  coverage on Christmas Eve or New Year's Eve may be granted
-                  one (1) equivalent PTO day, subject to ORCA Rehab approval
-                  and operational needs.
-                </p>
-                <p>
-                  Any equivalent PTO granted under this section may be
-                  scheduled and used later in the calendar year, subject to
-                  scheduling approval, patient care needs, facility coverage
-                  needs, and operational requirements.
-                </p>
-                <p>
-                  <strong>B. Providers Assigned to Other Hospital Facilities</strong>
-                  <br />
-                  This section applies to providers assigned to other
-                  hospital facilities, including OC Global, Placentia Linda,
-                  and Anaheim Regional Medical Center.
-                </p>
-                <p>
-                  Providers assigned to these hospitals will generally not be
-                  required to provide routine holiday coverage but should
-                  remain reasonably available in the event of urgent patient
-                  matters requiring provider input, coordination, or
-                  escalation.
-                </p>
-
-                <h4>IV. Non-Hospital Provider Holiday Policy</h4>
-                <p>
-                  This section applies to providers assigned to skilled
-                  nursing facilities, assisted living facilities, clinics,
-                  and other non-hospital settings.
-                </p>
-                <p>
-                  Non-hospital providers will generally have their schedules
-                  adjusted to accommodate recognized holidays when feasible.
-                </p>
-                <p>
-                  Patient schedules will be coordinated in advance to
-                  minimize disruption and allow providers to observe
-                  recognized holidays while maintaining appropriate
-                  continuity of care.
-                </p>
-                <p>
-                  Providers who are regularly scheduled for administrative
-                  work on Wednesdays may have their schedule adjusted during
-                  weeks in which a recognized holiday occurs. In those
-                  circumstances, providers will generally observe the
-                  holiday off and may instead round at their assigned
-                  facilities on Wednesday of that week, subject to
-                  operational needs and leadership direction.
-                </p>
-                <p>
-                  Supervisors and scheduling staff will work collaboratively
-                  with providers to ensure appropriate patient care
-                  continuity and timely communication with facilities.
-                </p>
-                <p>
-                  During holidays, ORCA Rehab's after hours exchange service
-                  will manage incoming calls and triage urgent concerns.
-                  Providers are expected to remain available for urgent
-                  patient matters when necessary.
-                </p>
-
-                <h4>V. Paid Time Off (PTO) and Paid Sick Leave</h4>
-                <p>
-                  <em>
-                    For purposes of this policy, "full-time employee" means
-                    an employee who is regularly scheduled to work the
-                    minimum number of hours established by ORCA Rehab for
-                    full-time benefit eligibility.
-                  </em>
-                </p>
-                <p>
-                  Eligible full-time employees receive eighty (80) hours of
-                  paid time off (PTO) per calendar year. PTO is intended for
-                  vacation, personal time, scheduled appointments, family
-                  needs, rest, and other approved absences from work. PTO
-                  accrues over time in accordance with ORCA Rehab's payroll
-                  and accrual practices and is not front-loaded unless
-                  expressly stated otherwise in writing.
-                </p>
-                <p>
-                  Eligible employees also receive paid sick leave in
-                  accordance with applicable California law. Paid sick leave
-                  accrues at the rate required by law or at such greater rate
-                  as ORCA Rehab may establish. Employees may use paid sick
-                  leave for all purposes permitted under applicable law.
-                </p>
-                <p>
-                  Unused paid sick leave may, with prior approval from ORCA
-                  Rehab, be converted to PTO at the end of the applicable
-                  calendar year. Once converted, such leave shall become
-                  accrued PTO and may be carried over subject to the maximum
-                  PTO accrual limit. PTO, including any sick leave converted
-                  to PTO with ORCA Rehab's approval, may be carried over from
-                  year to year. Once an employee's accrued PTO balance
-                  reaches one hundred (100) hours, PTO will cease accruing
-                  until the balance falls below one hundred (100) hours.
-                </p>
-                <p>
-                  Accrued but unused PTO shall be paid upon separation from
-                  employment to the extent required by applicable California
-                  law. Paid sick leave that has not been converted to PTO
-                  shall not be paid out upon separation except as required by
-                  applicable law.
-                </p>
-                <p>
-                  Employees must request planned PTO at least four (4) weeks
-                  in advance whenever reasonably possible. All PTO requests
-                  are subject to ORCA Rehab's approval and may be approved,
-                  denied, modified, postponed, or conditioned based upon
-                  staffing requirements, operational needs, patient care
-                  needs, provider coverage, facility coverage, scheduling
-                  conflicts, pending deadlines, employee role, or other
-                  legitimate business considerations. Employees should not
-                  make non-refundable travel arrangements until PTO has been
-                  approved.
-                </p>
-                <p>
-                  Except with prior written approval from ORCA Rehab,
-                  employees generally may not take more than two (2)
-                  consecutive weeks of PTO, personal leave, approved sick
-                  leave, or any combination thereof.
-                </p>
-                <p>
-                  Employees requesting sick leave should provide reasonable
-                  advance notice when the need for leave is foreseeable and,
-                  when unforeseeable, shall notify ORCA Rehab as soon as
-                  reasonably practicable while complying with the Company's
-                  normal attendance and call-out procedures, except where
-                  prohibited by law.
-                </p>
-                <p>
-                  ORCA Rehab reserves the right to interpret, administer,
-                  amend, suspend, or modify its PTO and paid sick leave
-                  policies, including accrual rates, conversion, rollover,
-                  approval procedures, maximum accrual limits, documentation
-                  requirements, and other administrative provisions, at any
-                  time, with or without notice, provided that any such
-                  changes comply with applicable federal, state, and local
-                  law.
-                </p>
-
-                <h4>VI. Documentation</h4>
-                <p>
-                  ORCA Rehab may request reasonable documentation supporting
-                  the need for paid sick leave only to the extent permitted
-                  by applicable law. Employees will not be required to
-                  disclose private medical information beyond what is
-                  legally permitted and reasonably necessary.
-                </p>
-
-                <h4>VII. Abuse or Misuse of Leave</h4>
-                <p>
-                  Employees are expected to use PTO, paid sick leave, and
-                  holiday benefits honestly and appropriately. Misuse of PTO,
-                  paid sick leave, holiday time, falsification of reasons
-                  for leave, failure to follow notice procedures, or abuse of
-                  leave may result in corrective action, up to and including
-                  termination, consistent with applicable law.
-                </p>
-                <p>
-                  ORCA Rehab will not discipline or retaliate against an
-                  employee for properly requesting or using paid sick leave
-                  or protected leave in accordance with applicable law.
-                </p>
-
-                <h4>VIII. No Retaliation</h4>
-                <p>
-                  ORCA Rehab prohibits retaliation, discrimination,
-                  discipline, or adverse action against any employee for
-                  properly requesting, using, or attempting to use paid sick
-                  leave or other protected leave in accordance with
-                  applicable law.
-                </p>
-                <p>
-                  Employees should report any concern regarding retaliation
-                  or interference with protected leave rights to ORCA Rehab
-                  leadership or the designated HR contact.
-                </p>
-
-                <h4>IX. Coordination With Other Leave Laws</h4>
-                <p>
-                  PTO and paid sick leave may run concurrently with other
-                  legally protected leaves where permitted by law. ORCA
-                  Rehab will comply with all applicable federal, state, and
-                  local leave laws.
-                </p>
-                <p>
-                  If any local, state, or federal law provides greater rights
-                  or benefits than this policy, ORCA Rehab will comply with
-                  the applicable legal requirement.
-                </p>
-
-                <h4>X. Operational Needs and Policy Administration</h4>
-                <p>
-                  ORCA Rehab reserves the right to modify schedules, holiday
-                  assignments, staffing requirements, provider coverage
-                  expectations, facility assignments, rounding schedules,
-                  PTO approvals, leave procedures, and other operational
-                  requirements based on patient care demands, operational
-                  needs, staffing availability, facility expectations, and
-                  applicable law.
-                </p>
-                <p>
-                  Any approved holiday time off beyond the provisions
-                  outlined in this policy may require the use of accrued
-                  PTO, vacation time, or unpaid leave, subject to management
-                  approval.
-                </p>
-                <p>
-                  ORCA Rehab retains discretion to interpret, administer,
-                  and implement this policy, consistent with applicable law.
-                </p>
-
-                <h4>XI. Policy Changes</h4>
-                <p>
-                  This policy is intended as a guideline only and does not
-                  create a contract of employment or guarantee any
-                  particular benefit. ORCA Rehab reserves the right to
-                  modify, amend, suspend, or discontinue this policy at any
-                  time, with or without notice, subject to applicable law.
-                  Nothing in this policy alters the at-will employment
-                  relationship between ORCA Rehab and its employees.
-                </p>
-
-                <h4>Employee Acknowledgment</h4>
-                <p>
-                  I acknowledge that I have received and reviewed the ORCA
-                  Rehab, Inc. Holiday, Paid Time Off, and Paid Sick Leave
-                  Policy. I understand that this policy may be modified from
-                  time to time, subject to applicable law, and that this
-                  policy does not alter the at-will employment relationship.
-                </p>
-                <p>
-                  I further acknowledge that this policy is intended solely
-                  as a guideline, does not constitute a contract of
-                  employment, and may be modified, amended, suspended, or
-                  discontinued by ORCA Rehab at any time, subject to
-                  applicable law.
-                </p>
-              </div>
-            </div>
-
-            <p className="policy-scroll-status">
-              {hasReadPolicy
-                ? "✓ You've reached the end of the policy."
-                : "⬇ Scroll to the bottom to continue."}
-            </p>
-
-            <label className="form-field">
-              <span>Type your full legal name to sign</span>
-              <input
-                type="text"
-                autoComplete="off"
-                placeholder={
-                  hasReadPolicy
-                    ? "e.g. Jane Doe"
-                    : "Scroll through the policy above first"
-                }
-                value={policyForm.fullName}
-                onChange={(event) =>
-                  setPolicyForm({ fullName: event.target.value })
-                }
-                disabled={!hasReadPolicy}
-                required
-              />
-              <small>
-                By typing your name, you are electronically signing this
-                policy agreement.
-              </small>
-            </label>
-
-            <div className="form-footer">
-              <p>All fields are required.</p>
-
-              <button
-                className="primary-button"
-                type="submit"
-                disabled={isSubmitting || !hasReadPolicy}
-              >
-                {isSubmitting ? "Submitting…" : "Sign and submit"}
-                <span aria-hidden="true">→</span>
-              </button>
-            </div>
-          </form>
         </section>
       </main>
     );
@@ -1326,31 +1269,41 @@ function App() {
 
   return (
     <main className="app-shell">
-      <DevNav onNavigate={handleDevNavigate} />
+      <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
       <section className="form-card">
-        <button
-          className="back-button"
-          type="button"
-          onClick={() => setPage("welcome")}
-        >
-          ← Back
-        </button>
+        <div className="page-actions">
+          <button
+            className="back-button"
+            type="button"
+            onClick={() => setPage("welcome")}
+          >
+            ← Back
+          </button>
+
+          {applicantAuthStatus === "authenticated" && (
+            <button className="back-button" type="button" onClick={handleLogout}>
+              Sign out
+            </button>
+          )}
+        </div>
 
         <header className="form-header">
           <img className="form-logo" src={logo} alt="ORCA Rehab" />
 
           <div>
-            <p className="eyebrow">STEP 1 OF 4</p>
             <h1>Employee Information</h1>
             <p>Please enter your legal information exactly as it appears on official records.</p>
           </div>
         </header>
 
-        <div className="progress-track" aria-label="Onboarding progress">
-          <div className="progress-value" style={{ width: "25%" }} />
-        </div>
-
         <form className="employee-form" onSubmit={handleEmployeeSubmit}>
+          <SectionHeader
+            step={1}
+            total={4}
+            title="Personal Information"
+            description="Your legal name and contact details."
+          />
+
           <div className="field-row">
             <label className="form-field">
               <span>First name</span>
@@ -1399,13 +1352,15 @@ function App() {
             </label>
 
             <label className="form-field">
-              <span>Degree</span>
+              <span>State of birth</span>
               <input
                 type="text"
-                name="degree"
-                placeholder="e.g. Nursing, Engineering"
-                value={form.degree}
-                onChange={(event) => updateField("degree", event.target.value)}
+                name="stateOfBirth"
+                placeholder="e.g. California"
+                value={form.stateOfBirth}
+                onChange={(event) =>
+                  updateField("stateOfBirth", event.target.value)
+                }
                 required
               />
             </label>
@@ -1459,45 +1414,241 @@ function App() {
             </small>
           </label>
 
-          <label className="form-field">
-            <span>Driver's license photo</span>
-            <input
-              type="file"
-              name="driverLicensePhoto"
-              accept="image/*"
-              onChange={handleLicenseChange}
-              required
-            />
+          <SectionHeader
+            step={2}
+            total={4}
+            title="Provider Details"
+            description="Your role, degree, and National Provider Identifier."
+          />
 
-            {licensePreview && (
-              <img
-                className="license-preview"
-                src={licensePreview}
-                alt="Driver's license preview"
+          <div className="field-row">
+            <label className="form-field">
+              <span>Provider role</span>
+              <select
+                value={form.providerRole}
+                onChange={(event) =>
+                  updateField("providerRole", event.target.value)
+                }
+                required
+              >
+                <option value="" disabled>
+                  Select your role
+                </option>
+                <option value="PA">Physician Assistant (PA)</option>
+                <option value="NP">Nurse Practitioner (NP)</option>
+                <option value="MD">Physician (MD)</option>
+              </select>
+            </label>
+
+            <label className="form-field">
+              <span>Degree</span>
+              <input
+                type="text"
+                name="degree"
+                placeholder="e.g. Master in Nursing, MD"
+                value={form.degree}
+                onChange={(event) => updateField("degree", event.target.value)}
+                required
               />
-            )}
-          </label>
+            </label>
+          </div>
 
           <label className="form-field">
-            <span>Resume</span>
+            <span>NPI</span>
             <input
-              type="file"
-              name="resume"
-              accept=".pdf,.doc,.docx"
-              onChange={handleResumeChange}
+              type="text"
+              name="npi"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="10-digit National Provider Identifier"
+              maxLength={10}
+              value={form.npi}
+              onChange={(event) => updateField("npi", event.target.value)}
               required
             />
-
-            {form.resume && (
-              <small className="file-name">{form.resume.name}</small>
-            )}
           </label>
+
+          <SectionHeader
+            step={3}
+            total={4}
+            title="Credentialing Portal Logins"
+            description="Your CAQH, NPPES, and PECOS account credentials."
+          />
+
+          <div className="field-row">
+            <label className="form-field">
+              <span>CAQH username</span>
+              <input
+                type="text"
+                autoComplete="off"
+                value={form.caqhUsername}
+                onChange={(event) =>
+                  updateField("caqhUsername", event.target.value)
+                }
+                required
+              />
+            </label>
+
+            <label className="form-field">
+              <span>CAQH password</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={form.caqhPassword}
+                onChange={(event) =>
+                  updateField("caqhPassword", event.target.value)
+                }
+                required
+              />
+            </label>
+          </div>
+
+          <div className="field-row">
+            <label className="form-field">
+              <span>NPPES username</span>
+              <input
+                type="text"
+                autoComplete="off"
+                value={form.nppesUsername}
+                onChange={(event) =>
+                  updateField("nppesUsername", event.target.value)
+                }
+                required
+              />
+            </label>
+
+            <label className="form-field">
+              <span>NPPES password</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={form.nppesPassword}
+                onChange={(event) =>
+                  updateField("nppesPassword", event.target.value)
+                }
+                required
+              />
+            </label>
+          </div>
+
+          <div className="field-row">
+            <label className="form-field">
+              <span>PECOS username</span>
+              <input
+                type="text"
+                autoComplete="off"
+                value={form.pecosUsername}
+                onChange={(event) =>
+                  updateField("pecosUsername", event.target.value)
+                }
+                required
+              />
+            </label>
+
+            <label className="form-field">
+              <span>PECOS password</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={form.pecosPassword}
+                onChange={(event) =>
+                  updateField("pecosPassword", event.target.value)
+                }
+                required
+              />
+            </label>
+          </div>
+
+          <SectionHeader
+            step={4}
+            total={4}
+            title="Documents"
+            description="Upload your credentialing paperwork — we'll verify each one as it uploads."
+          />
+
+          <div className="progress-track" aria-label="Document verification progress">
+            <div className="progress-value" style={{ width: `${progressPercent}%` }} />
+          </div>
+          <p className="progress-label">
+            {verifiedRequiredCount} of {REQUIRED_DOCUMENT_KEYS.length} documents verified
+          </p>
+
+          <div className="documents-grid">
+            <DocumentField
+              label="Driver's license photo"
+              accept="image/*"
+              required
+              doc={documents.driverLicensePhoto}
+              onFileSelected={handleFileUpload("driverLicensePhoto", false)}
+            />
+
+            <DocumentField
+              label="Resume (CV)"
+              accept=".pdf,.doc,.docx"
+              required
+              doc={documents.resume}
+              onFileSelected={handleFileUpload("resume", false)}
+            />
+
+            <DocumentField
+              label="Degree certificate / diploma"
+              required
+              doc={documents.degreeCertificate}
+              onFileSelected={handleFileUpload("degreeCertificate", true)}
+            />
+
+            <DocumentField
+              label="Board certificate"
+              hint={boardCertifyingBody(form.providerRole)}
+              required
+              doc={documents.boardCertificate}
+              onFileSelected={handleFileUpload("boardCertificate", true)}
+            />
+
+            <DocumentField
+              label="DEA certificate"
+              hint="We'll automatically check the expiration date printed on your certificate."
+              required
+              doc={documents.deaCertificate}
+              onFileSelected={handleFileUpload("deaCertificate", true)}
+            />
+          </div>
+
+          <div className="documents-grid">
+            <DocumentField
+              label="Professional liability"
+              required
+              doc={documents.professionalLiability}
+              onFileSelected={handleFileUpload("professionalLiability", true)}
+            />
+
+            <DocumentField
+              label="State medical license"
+              required
+              doc={documents.stateMedicalLicense}
+              onFileSelected={handleFileUpload("stateMedicalLicense", true)}
+            />
+
+            <DocumentField
+              label="BLS certificate"
+              required
+              doc={documents.blsCertificate}
+              onFileSelected={handleFileUpload("blsCertificate", true)}
+            />
+
+            <DocumentField
+              label="ACLS certificate"
+              required={false}
+              doc={documents.aclsCertificate}
+              onFileSelected={handleFileUpload("aclsCertificate", true)}
+            />
+          </div>
 
           <div className="form-footer">
-            <p>All fields are required.</p>
+            <p>Fields marked required must be completed.</p>
 
-            <button className="primary-button" type="submit">
-              Save and continue
+            <button className="primary-button" type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Submitting…" : "Submit"}
               <span aria-hidden="true">→</span>
             </button>
           </div>

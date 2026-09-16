@@ -4,13 +4,7 @@ New employee onboarding portal for ORCA Rehab.
 
 ## What it does
 
-Guides a new hire through three steps:
-
-1. **Employee information** — name, date of birth, phone, degree, home address, SSN, driver's license photo, resume
-2. **Direct deposit** — bank name, account type, routing/account number, with an optional split between two accounts
-3. **Additional information** — emergency contact, work authorization (Form I-9), tax withholding (Form W-4)
-
-On final submit, the app sends the employee's basic info to a small backend that creates a matching employee record in QuickBooks Online.
+Collects a new hire's **employee information** — name, date of birth, phone, degree, home address, SSN, driver's license photo, resume — and saves it for HR/Payroll to review. Policy agreement signing now happens through a separate tool, not this portal.
 
 ## Getting started (frontend)
 
@@ -21,19 +15,13 @@ npm run dev
 
 Built with Vite, React, and TypeScript.
 
-## Backend (QuickBooks integration)
+## Backend
 
-The frontend can't safely hold QuickBooks API credentials, so an Express server in [server/](server/) handles that side. It shares the root `package.json` — there's a single `npm install` for the whole project. (`server/package.json` exists only to mark that directory as CommonJS, since the root is an ES module package.)
+The frontend can't safely hold the encryption key or admin credentials, so an Express server in [server/](server/) handles submission storage and the HR/Payroll admin login. It shares the root `package.json` — there's a single `npm install` for the whole project. (`server/package.json` exists only to mark that directory as CommonJS, since the root is an ES module package.)
 
 ```bash
 cp server/.env.example server/.env
 ```
-
-Fill in `.env` with your QuickBooks app's credentials from the [Intuit Developer portal](https://developer.intuit.com/):
-
-- `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` — from your app's Keys tab
-- `QBO_ENVIRONMENT` — `sandbox` while testing, `production` when you're ready to go live
-- `QBO_REDIRECT_URI` — must match a Redirect URI registered on your app (defaults to `http://localhost:4000/api/quickbooks/callback`)
 
 Start the server (from the repo root, in a second terminal):
 
@@ -41,24 +29,14 @@ Start the server (from the repo root, in a second terminal):
 npm run dev:server
 ```
 
-Then connect it to your QuickBooks company once, by visiting:
-
-```
-http://localhost:4000/api/quickbooks/connect
-```
-
-This walks you through Intuit's OAuth approval screen and stores the resulting tokens in Supabase (the `quickbooks_tokens` table). After that, an HR/Payroll admin can approve a submission and have the employee record created in QuickBooks.
-
-**What does and doesn't sync:** QuickBooks Online's public Accounting API allows creating employee records with name, address, SSN, date of birth, and hire date — that part is automated. Direct deposit bank details and W-4 tax withholding live in QuickBooks Online Payroll, which Intuit does not expose via public API to third-party apps. Those fields are stored securely (see below) for HR/Payroll to enter manually into QB Payroll.
-
 ## Data storage and HR/Payroll dashboard
 
-Every submission is saved to **Supabase** (Postgres + Storage), regardless of whether the QuickBooks sync succeeds — QuickBooks is a best-effort sync, not the source of truth. Sensitive fields (SSN, bank routing/account numbers) are encrypted with AES-256-GCM *by the app, before they're sent to Supabase*, so the database only ever holds ciphertext for those. Uploaded files (driver's license photo, resume) go to a private Storage bucket.
+Every submission is saved to **Supabase** (Postgres + Storage). Sensitive fields (SSN) are encrypted with AES-256-GCM *by the app, before they're sent to Supabase*, so the database only ever holds ciphertext for those. Uploaded files (driver's license photo, resume) go to a private Storage bucket.
 
 ### Supabase setup
 
 1. Create a project at [supabase.com](https://supabase.com/dashboard).
-2. Open the **SQL Editor** and run [server/supabase/schema.sql](server/supabase/schema.sql). This creates the `submissions`, `quickbooks_tokens`, and `session` tables, creates the private `onboarding-uploads` bucket, and enables Row Level Security on everything.
+2. Open the **SQL Editor** and run [server/supabase/schema.sql](server/supabase/schema.sql). This creates the `submissions` and `session` tables, creates the private `onboarding-uploads` bucket, and enables Row Level Security on everything.
 3. Copy three values into `server/.env`:
    - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — Project Settings → **API**
    - `DATABASE_URL` — Project Settings → **Database** → Connection string → URI (swap in your database password)
@@ -108,13 +86,15 @@ Set these in `server/.env` too (see `.env.example` for the full list):
 
 Optionally, fill in the `SMTP_*` and `NOTIFY_EMAIL_TO` variables to get an email notification whenever a new submission comes in. Leave them blank to skip notifications entirely (nothing breaks — it just logs a warning and moves on).
 
+Optionally, set `OPENAI_API_KEY` to turn on AI document verification: at submit time, the backend downloads each credentialing document (board certificate, DEA certificate, professional liability, state medical license, BLS/ACLS certificates) and asks an OpenAI vision model whether it actually looks like that kind of document, rejecting the submission with a specific error if one doesn't (e.g. a driver's license photo uploaded where a DEA certificate was expected). Get a key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys). `OPENAI_MODEL` defaults to `gpt-5.4-mini` if unset. Leave `OPENAI_API_KEY` blank to skip this check entirely — uploads still work, they just aren't verified.
+
 With both the frontend (`npm run dev`) and backend (`npm run dev:server`) running, HR/Payroll can log in at:
 
 ```
 http://localhost:5173/admin
 ```
 
-This is part of the React app (not the backend), reusing the onboarding portal's own styling, to see every submission (name, date, QuickBooks sync status), view full details for manual entry into QB Payroll, download the uploaded license photo/resume, and remove a submission once it's been processed.
+This is part of the React app (not the backend), reusing the onboarding portal's own styling, to see every submission (name, date), view full details with inline document previews and AI verification badges, download the full credentialing document package as a ZIP (formatted to match ORCA's existing manual folder structure — see `server/src/credentialingPackage.js`), and remove a submission once it's been processed.
 
 In local dev, the Vite dev server proxies `/api` requests to the backend on port 4000, so everything is same-origin and the session cookie just works. In production on Vercel it is genuinely same-origin, so no proxy is involved.
 
@@ -122,7 +102,7 @@ In local dev, the Vite dev server proxies `/api` requests to the backend on port
 
 Frontend and backend deploy together as a **single Vercel project**. The Express app becomes one Vercel Function serving `/api/*`, and the Vite build is served as static files from the same domain. Because they share an origin there is no CORS and no cross-site cookie handling — which is why `FRONTEND_ORIGIN` should stay unset in production.
 
-This only works because the backend keeps **no state on disk**: database, uploaded files, OAuth tokens, and login sessions all live in Supabase.
+This only works because the backend keeps **no state on disk**: database, uploaded files, and login sessions all live in Supabase.
 
 How it fits together:
 
@@ -135,12 +115,11 @@ How it fits together:
 
 ### 1. Set environment variables
 
-In the Vercel project settings, add every variable from `server/.env` — Supabase credentials, QuickBooks credentials, `ENCRYPTION_KEY`, `SESSION_SECRET`, `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` — with these differences:
+In the Vercel project settings, add every variable from `server/.env` — Supabase credentials, `ENCRYPTION_KEY`, `SESSION_SECRET`, `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` — with these differences:
 
 - `NODE_ENV=production` — makes the login cookie `Secure`.
 - `DATABASE_URL` — **must** be Supabase's pooled connection string (Project Settings → Database → **Connection pooling**, port `6543`), not the direct `:5432` one. Every function invocation opens its own connection and direct Postgres runs out of slots fast.
 - `FRONTEND_ORIGIN` — leave **unset**. Setting it turns on CORS and switches the cookie to `SameSite=None`, which you only want if you later split the frontend onto its own domain.
-- `QBO_REDIRECT_URI` — `https://your-app.vercel.app/api/quickbooks/callback`, and register that same URI in your QuickBooks app's keys tab.
 - `VITE_API_URL` — leave **unset**. The frontend falls back to relative `/api` paths, which is exactly right when both halves share a domain.
 
 Don't set `PORT`; Vercel manages that.
@@ -156,8 +135,6 @@ curl https://your-app.vercel.app/api/health
 Expect `{"ok":true,"path":"/api/health","supabaseConfigured":true,"sessionStore":"postgres","crossSite":false}`.
 
 The `path` field is the thing to look at. It confirms the platform forwarded the **full** request path to Express rather than a truncated one — every other route depends on that. If you get a 404 here, or `path` comes back as just `/api`, the rewrite in `vercel.json` isn't doing what it should; see [Express on Vercel](https://vercel.com/docs/frameworks/backend/express).
-
-Finally, visit `https://your-app.vercel.app/api/quickbooks/connect` once to reconnect QuickBooks under the new domain.
 
 ### Deploying the backend elsewhere instead
 

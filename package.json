@@ -22,9 +22,10 @@
     "dotenv": "^16.6.1",
     "express": "^4.22.2",
     "express-session": "^1.19.0",
-    "intuit-oauth": "^4.2.5",
-    "node-quickbooks": "^2.0.50",
+    "jszip": "^3.10.1",
     "nodemailer": "^9.0.3",
+    "openai": "^7.5.0",
+    "pdfkit": "^0.19.1",
     "pg": "^8.22.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
