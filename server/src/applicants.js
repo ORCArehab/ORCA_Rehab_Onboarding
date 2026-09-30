@@ -2,7 +2,6 @@ const { getSupabase } = require("./supabase");
 const { encrypt, decrypt } = require("./crypto");
 
 const ACCOUNTS_TABLE = "applicant_accounts";
-const RESETS_TABLE = "applicant_password_resets";
 
 const DRAFT_PATH_COLUMNS = {
   driverLicensePath: "draft_driver_license_path",
@@ -20,25 +19,21 @@ function failed(action, error) {
   return new Error(`Failed to ${action}: ${error.message}`);
 }
 
-async function createAccount({ firstName, lastName, email, passwordHash }) {
+// Providers sign in with their ORCA Google account, so their onboarding
+// account is found (or made, on first sign-in) by that account's email.
+async function findOrCreateAccount({ email, firstName, lastName }) {
+  const existing = await getAccountByEmail(email);
+  if (existing) return existing.id;
+
   const { data, error } = await getSupabase()
     .from(ACCOUNTS_TABLE)
-    .insert({
-      first_name: firstName,
-      last_name: lastName,
-      email,
-      password_hash: passwordHash,
-    })
+    .insert({ first_name: firstName, last_name: lastName, email })
     .select("id")
     .single();
 
   if (error) {
-    // Postgres unique_violation
-    if (error.code === "23505") {
-      throw Object.assign(new Error("An account with this email already exists."), {
-        statusCode: 409,
-      });
-    }
+    // Postgres unique_violation: a concurrent first sign-in created it.
+    if (error.code === "23505") return (await getAccountByEmail(email)).id;
     throw failed("create the account", error);
   }
 
@@ -49,7 +44,9 @@ async function getAccountByEmail(email) {
   const { data, error } = await getSupabase()
     .from(ACCOUNTS_TABLE)
     .select("*")
-    .ilike("email", email)
+    // Emails are stored lowercased. Not ilike: `_` and `%` in an address
+    // would act as wildcards and could match someone else's account.
+    .eq("email", email.toLowerCase())
     .maybeSingle();
 
   if (error) throw failed("look up the account", error);
@@ -217,48 +214,8 @@ async function markSubmitted(accountId, submissionId) {
   if (error) throw failed("mark the account as submitted", error);
 }
 
-async function updatePassword(accountId, passwordHash) {
-  const { error } = await getSupabase()
-    .from(ACCOUNTS_TABLE)
-    .update({ password_hash: passwordHash, updated_at: new Date().toISOString() })
-    .eq("id", accountId);
-
-  if (error) throw failed("update the password", error);
-}
-
-// 1 hour — short enough to limit exposure if the email is somehow
-// intercepted, long enough that someone won't realistically miss the window.
-const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
-
-async function createPasswordResetToken(accountId, tokenHash) {
-  const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
-
-  const { error } = await getSupabase()
-    .from(RESETS_TABLE)
-    .insert({ token_hash: tokenHash, account_id: accountId, expires_at: expiresAt });
-
-  if (error) throw failed("create the password reset token", error);
-}
-
-// Looks up a reset token by its hash, verifies it hasn't expired, and
-// deletes it either way (a token is single-use, valid or not).
-async function consumePasswordResetToken(tokenHash) {
-  const { data, error } = await getSupabase()
-    .from(RESETS_TABLE)
-    .delete()
-    .eq("token_hash", tokenHash)
-    .select("account_id, expires_at")
-    .maybeSingle();
-
-  if (error) throw failed("consume the password reset token", error);
-  if (!data) return null;
-  if (new Date(data.expires_at).getTime() < Date.now()) return null;
-
-  return data.account_id;
-}
-
 module.exports = {
-  createAccount,
+  findOrCreateAccount,
   getAccountByEmail,
   getAccountById,
   toProfile,
@@ -267,7 +224,4 @@ module.exports = {
   listAccounts,
   getAccountDetail,
   markSubmitted,
-  updatePassword,
-  createPasswordResetToken,
-  consumePasswordResetToken,
 };

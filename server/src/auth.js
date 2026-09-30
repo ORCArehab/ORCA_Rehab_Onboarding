@@ -1,7 +1,7 @@
 const orcaApi = require("./orcaApi");
 
-// How often an admin session re-checks the person's roles with the ORCA API.
-// Revoking HR access in the portal locks them out of this dashboard within this.
+// How often a signed-in session re-checks the person's roles with the ORCA API.
+// Revoking a role in the portal locks them out of this app within this.
 const ROLE_RECHECK_MS = 60 * 1000;
 
 // Fallback when the ORCA API isn't configured (local dev): decides from env
@@ -34,26 +34,74 @@ function isAdminEmailAllowed(email) {
   return false;
 }
 
-async function requireAuth(req, res, next) {
-  if (!req.session?.isAdmin) return res.status(401).json({ error: "Not authenticated." });
-
-  // Sessions from the env-list fallback have no API token to re-check.
-  const token = req.session.orcaApiToken;
-  if (!token || Date.now() - (req.session.rolesCheckedAt || 0) < ROLE_RECHECK_MS) return next();
-
-  try {
-    const { person } = await orcaApi.getMe(token);
-    if (!orcaApi.canUseDashboard(person)) throw new orcaApi.OrcaApiError(403);
-    req.session.rolesCheckedAt = Date.now();
-    next();
-  } catch (error) {
-    if (error instanceof orcaApi.OrcaApiError && (error.status === 401 || error.status === 403)) {
-      return req.session.destroy(() => res.status(401).json({ error: "Not authenticated." }));
-    }
-    // This dashboard holds SSNs: if access can't be confirmed, refuse rather than assume.
-    console.error("Could not confirm admin access with the ORCA API:", error.message);
-    res.status(503).json({ error: "Couldn't confirm your access. Please try again shortly." });
-  }
+// Fallback when the ORCA API isn't configured: anyone on the company's
+// Workspace domain may fill out the onboarding form. With the API configured,
+// only people holding the PROVIDER role can.
+function isWorkspaceAccount({ email, hostedDomain }) {
+  const domain = process.env.GOOGLE_WORKSPACE_DOMAIN?.trim().toLowerCase();
+  // Not configured — refuse everyone rather than admit any Google account.
+  if (!domain) return false;
+  return email.toLowerCase().endsWith(`@${domain}`) && hostedDomain?.toLowerCase() === domain;
 }
 
-module.exports = { isAdminEmailAllowed, requireAuth };
+// Middleware that lets a signed-in session through, re-checking its roles with
+// the ORCA API at most once per ROLE_RECHECK_MS. Sessions from the env-config
+// fallback have no API token and are let through as-is.
+function roleGuard({ isSignedIn, tokenKey, checkedAtKey, isAllowed, signOut }) {
+  return async (req, res, next) => {
+    if (!isSignedIn(req)) return res.status(401).json({ error: "Not authenticated." });
+
+    const token = req.session[tokenKey];
+    if (!token || Date.now() - (req.session[checkedAtKey] || 0) < ROLE_RECHECK_MS) return next();
+
+    try {
+      const { person } = await orcaApi.getMe(token);
+      if (!isAllowed(person)) throw new orcaApi.OrcaApiError(403);
+      req.session[checkedAtKey] = Date.now();
+      next();
+    } catch (error) {
+      if (error instanceof orcaApi.OrcaApiError && (error.status === 401 || error.status === 403)) {
+        return signOut(req, () => res.status(401).json({ error: "Not authenticated." }));
+      }
+      // Both sides of this app hold SSNs: if access can't be confirmed, refuse rather than assume.
+      console.error("Could not confirm access with the ORCA API:", error.message);
+      res.status(503).json({ error: "Couldn't confirm your access. Please try again shortly." });
+    }
+  };
+}
+
+// HR/Payroll dashboard.
+const requireAuth = roleGuard({
+  isSignedIn: (req) => Boolean(req.session?.isAdmin),
+  tokenKey: "orcaApiToken",
+  checkedAtKey: "rolesCheckedAt",
+  isAllowed: orcaApi.canUseDashboard,
+  signOut: (req, done) => req.session.destroy(done),
+});
+
+// Providers filling out their own onboarding form. Signing out here leaves an
+// HR/Payroll login in the same browser untouched.
+const requireProviderAuth = roleGuard({
+  isSignedIn: (req) => Boolean(req.session?.applicantId),
+  tokenKey: "providerOrcaToken",
+  checkedAtKey: "providerRolesCheckedAt",
+  isAllowed: orcaApi.canUseOnboarding,
+  signOut: (req, done) => {
+    signOutProvider(req);
+    done();
+  },
+});
+
+function signOutProvider(req) {
+  req.session.applicantId = null;
+  req.session.providerOrcaToken = null;
+  req.session.providerRolesCheckedAt = null;
+}
+
+module.exports = {
+  isAdminEmailAllowed,
+  isWorkspaceAccount,
+  requireAuth,
+  requireProviderAuth,
+  signOutProvider,
+};

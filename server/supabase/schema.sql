@@ -43,8 +43,8 @@ create index if not exists submissions_created_at_idx
 -- --------------------------------------------------------------------------
 -- Applicant accounts
 -- --------------------------------------------------------------------------
--- New hires sign up (first/last name, email, password) before starting the
--- form so their progress can be saved. `draft_*` columns mirror the
+-- One per provider, created the first time they sign in with their ORCA
+-- Google account (matched by email), so their progress can be saved. `draft_*` columns mirror the
 -- corresponding fields on `submissions` — an in-progress, auto-saved copy of
 -- the same data, cleared once the real submission is created (see
 -- POST /api/onboarding/submit). `draft_data` is encrypted the same way
@@ -54,7 +54,8 @@ create table if not exists public.applicant_accounts (
   first_name                         text        not null,
   last_name                          text        not null,
   email                              text        not null,
-  password_hash                      text        not null,
+  -- Unused since providers sign in with Google; kept for older rows.
+  password_hash                      text,
   created_at                         timestamptz not null default now(),
   updated_at                         timestamptz not null default now(),
   submitted_at                       timestamptz,
@@ -85,18 +86,12 @@ create unique index if not exists applicant_accounts_email_idx
 alter table public.applicant_accounts
   add column if not exists submission_id bigint references public.submissions(id) on delete set null;
 
--- --------------------------------------------------------------------------
--- Applicant password reset tokens
--- --------------------------------------------------------------------------
--- Only the sha256 hash of the token is ever stored — the raw token exists
--- only in the emailed link — same principle as the HMAC-signed upload paths
--- in storage.js. Tokens are single-use: consuming one deletes the row.
-create table if not exists public.applicant_password_resets (
-  token_hash text        primary key,
-  account_id bigint      not null references public.applicant_accounts(id) on delete cascade,
-  expires_at timestamptz not null,
-  created_at timestamptz not null default now()
-);
+-- Providers sign in with Google now, so new accounts have no password.
+alter table public.applicant_accounts
+  alter column password_hash drop not null;
+
+-- Password reset tokens, from before providers signed in with Google.
+drop table if exists public.applicant_password_resets;
 
 -- --------------------------------------------------------------------------
 -- Admin login sessions (connect-pg-simple)
@@ -131,7 +126,6 @@ on conflict (id) do update set public = false, file_size_limit = 10485760;
 -- here, remember the anon key is public by design.
 alter table public.submissions               enable row level security;
 alter table public.applicant_accounts        enable row level security;
-alter table public.applicant_password_resets enable row level security;
 alter table public."session"                 enable row level security;
 
 -- --------------------------------------------------------------------------
@@ -145,6 +139,5 @@ alter table public."session"                 enable row level security;
 -- configured correctly above.
 grant all privileges on table public.submissions to service_role;
 grant all privileges on table public.applicant_accounts to service_role;
-grant all privileges on table public.applicant_password_resets to service_role;
 grant all privileges on table public."session" to service_role;
 grant usage, select on all sequences in schema public to service_role;

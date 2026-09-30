@@ -5,14 +5,19 @@ const cors = require("cors");
 const session = require("express-session");
 const db = require("./db");
 const { createSignedUpload, resolveUploadedFile, downloadFile, deleteFiles, signPath } = require("./storage");
-const { isAdminEmailAllowed, requireAuth } = require("./auth");
+const {
+  isAdminEmailAllowed,
+  isWorkspaceAccount,
+  requireAuth,
+  requireProviderAuth,
+  signOutProvider,
+} = require("./auth");
 const googleAuth = require("./googleAuth");
 const orcaApi = require("./orcaApi");
-const { notifyNewSubmission, sendPasswordResetEmail } = require("./mailer");
+const { notifyNewSubmission } = require("./mailer");
 const documentVerification = require("./documentVerification");
 const { buildCredentialingZip } = require("./credentialingPackage");
 const applicants = require("./applicants");
-const applicantAuth = require("./applicantAuth");
 
 const app = express();
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
@@ -125,96 +130,36 @@ if (!IS_PRODUCTION) {
   });
 }
 
-// --- Applicant accounts ---
+// --- Provider accounts ---
 //
-// Separate from the HR/Payroll admin login below — this is what lets a new
-// hire create an account, have their in-progress form auto-saved, and log
-// back in later to finish it. `req.session.applicantId` and the admin
+// Providers open this app from Resources in the employee portal and sign in
+// with their ORCA Google account (see the Google callback below); holding the
+// PROVIDER role is what lets them in. Their account here keeps their
+// in-progress form auto-saved. `req.session.applicantId` and the admin
 // login's `req.session.isAdmin` share the same session object but are
 // otherwise unrelated.
 
-function requireApplicantAuth(req, res, next) {
-  if (req.session?.applicantId) return next();
-  res.status(401).json({ error: "Not authenticated." });
-}
-
-app.post("/api/applicant/signup", async (req, res) => {
-  const { firstName, lastName, email, password } = req.body ?? {};
-
-  if (!firstName?.trim() || !lastName?.trim()) {
-    return res.status(400).json({ error: "First and last name are required." });
-  }
-
-  if (!email?.trim()) {
-    return res.status(400).json({ error: "Email is required." });
-  }
-
-  if (!applicantAuth.isValidPassword(password)) {
-    return res.status(400).json({
-      error: `Password must be at least ${applicantAuth.MIN_PASSWORD_LENGTH} characters.`,
-    });
-  }
-
-  try {
-    const passwordHash = await applicantAuth.hashPassword(password);
-    const accountId = await applicants.createAccount({
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      email: email.trim().toLowerCase(),
-      passwordHash,
-    });
-
-    req.session.applicantId = accountId;
-    res.json({ success: true });
-  } catch (error) {
-    const status = error.statusCode ?? 500;
-    if (status === 500) console.error("Signup failed:", error);
-    res.status(status).json({ error: error.message || "Could not create your account." });
-  }
-});
-
-app.post("/api/applicant/login", async (req, res) => {
-  const { email, password } = req.body ?? {};
-
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email and password are required." });
-  }
-
-  try {
-    const account = await applicants.getAccountByEmail(email.trim());
-    const valid = account && (await applicantAuth.verifyPassword(password, account.password_hash));
-
-    if (!valid) {
-      return res.status(401).json({ error: "Invalid email or password." });
-    }
-
-    req.session.applicantId = account.id;
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Applicant login failed:", error);
-    res.status(500).json({ error: "Login is not configured correctly." });
-  }
-});
+app.get("/api/applicant/login/google", (req, res) => startGoogleLogin(req, res, "provider"));
 
 app.post("/api/applicant/logout", (req, res) => {
-  if (req.session) req.session.applicantId = null;
+  if (req.session) signOutProvider(req);
   res.json({ success: true });
 });
 
-app.get("/api/applicant/session", async (req, res) => {
-  if (!req.session?.applicantId) {
-    return res.json({ authenticated: false });
-  }
+app.get("/api/applicant/session", (req, res) => {
+  if (!req.session?.applicantId) return res.json({ authenticated: false });
 
-  try {
-    const account = await applicants.getAccountById(req.session.applicantId);
-    if (!account) return res.json({ authenticated: false });
+  requireProviderAuth(req, res, async () => {
+    try {
+      const account = await applicants.getAccountById(req.session.applicantId);
+      if (!account) return res.json({ authenticated: false });
 
-    res.json({ authenticated: true, ...applicants.toProfile(account) });
-  } catch (error) {
-    console.error("Failed to check applicant session:", error);
-    res.status(500).json({ error: "Could not check session." });
-  }
+      res.json({ authenticated: true, ...applicants.toProfile(account) });
+    } catch (error) {
+      console.error("Failed to check applicant session:", error);
+      res.status(500).json({ error: "Could not check session." });
+    }
+  });
 });
 
 // Keyed the same way DOCUMENT_CHECKS/the submit route's `files` body are —
@@ -231,7 +176,7 @@ const DRAFT_FILE_RESOLUTION = {
   aclsCertificate: { pathKey: "aclsCertificatePath", label: "ACLS certificate" },
 };
 
-app.get("/api/applicant/draft", requireApplicantAuth, async (req, res) => {
+app.get("/api/applicant/draft", requireProviderAuth, async (req, res) => {
   try {
     const draft = await applicants.getDraft(req.session.applicantId);
 
@@ -255,7 +200,7 @@ app.get("/api/applicant/draft", requireApplicantAuth, async (req, res) => {
 // Auto-save: called on a debounce from the frontend as the applicant fills
 // out the form. Only touches the fields/files actually included in the
 // request, so a partial save never clobbers other already-saved draft data.
-app.post("/api/applicant/draft", requireApplicantAuth, async (req, res) => {
+app.post("/api/applicant/draft", requireProviderAuth, async (req, res) => {
   const { employee, files, documentVerdicts } = req.body ?? {};
 
   const resolvedFiles = {};
@@ -283,69 +228,6 @@ app.post("/api/applicant/draft", requireApplicantAuth, async (req, res) => {
   } catch (error) {
     console.error("Failed to save draft:", error);
     res.status(500).json({ error: "Could not save your progress. Please try again." });
-  }
-});
-
-app.post("/api/applicant/forgot-password", async (req, res) => {
-  const { email } = req.body ?? {};
-
-  // Always the same response whether or not the account exists — avoids
-  // leaking which emails have accounts.
-  const genericResponse = {
-    success: true,
-    message: "If an account exists for that email, a reset link has been sent.",
-  };
-
-  if (!email?.trim()) return res.json(genericResponse);
-
-  try {
-    const account = await applicants.getAccountByEmail(email.trim());
-
-    if (account) {
-      const { token, tokenHash } = applicantAuth.generateResetToken();
-      await applicants.createPasswordResetToken(account.id, tokenHash);
-
-      const appUrl = process.env.APP_URL || "http://localhost:5173";
-      const resetUrl = `${appUrl}/?reset-token=${token}`;
-
-      await sendPasswordResetEmail({
-        to: account.email,
-        firstName: account.first_name,
-        resetUrl,
-      });
-    }
-  } catch (error) {
-    console.error("Failed to process forgot-password request:", error);
-    // Still return the generic response below — don't leak whether it
-    // failed because the account doesn't exist vs. an actual error.
-  }
-
-  res.json(genericResponse);
-});
-
-app.post("/api/applicant/reset-password", async (req, res) => {
-  const { token, newPassword } = req.body ?? {};
-
-  if (!token || !applicantAuth.isValidPassword(newPassword)) {
-    return res.status(400).json({
-      error: `Please provide a valid token and a password at least ${applicantAuth.MIN_PASSWORD_LENGTH} characters long.`,
-    });
-  }
-
-  try {
-    const accountId = await applicants.consumePasswordResetToken(applicantAuth.hashToken(token));
-
-    if (!accountId) {
-      return res.status(400).json({ error: "This reset link is invalid or has expired." });
-    }
-
-    const passwordHash = await applicantAuth.hashPassword(newPassword);
-    await applicants.updatePassword(accountId, passwordHash);
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Failed to reset password:", error);
-    res.status(500).json({ error: "Could not reset your password. Please try again." });
   }
 });
 
@@ -483,7 +365,7 @@ app.post("/api/onboarding/verify-document", async (req, res) => {
   }
 });
 
-app.post("/api/onboarding/submit", requireApplicantAuth, async (req, res) => {
+app.post("/api/onboarding/submit", requireProviderAuth, async (req, res) => {
   const { employee, files, documentVerdicts } = req.body ?? {};
 
   if (!employee?.firstName || !employee?.lastName) {
@@ -580,20 +462,30 @@ app.post("/api/onboarding/submit", requireApplicantAuth, async (req, res) => {
   res.json({ success: true, id: submissionId });
 });
 
-// --- Admin auth (Google Workspace SSO) ---
+// --- Google Workspace SSO ---
+//
+// Providers and HR/Payroll both sign in with Google through the same
+// callback (one redirect URI to register with Google). `purpose` records
+// which login was started, which decides the access check and where the
+// browser lands afterwards.
 
 function adminDashboardUrl() {
   return process.env.ADMIN_DASHBOARD_URL || "http://localhost:5173/admin";
 }
 
+function onboardingUrl() {
+  return `${process.env.APP_URL || "http://localhost:5173"}/`;
+}
+
 // Kicks off the OAuth redirect dance — the browser navigates here directly
 // (not a fetch), so this has to be a real 302 to Google, not a JSON response.
-app.get("/api/admin/login/google", (req, res) => {
+function startGoogleLogin(req, res, purpose) {
   // Rotates on every attempt and is checked again in the callback below, so
   // a callback request that didn't originate from this exact login attempt
   // (forged or replayed) is rejected before any session is granted.
   const state = crypto.randomBytes(16).toString("hex");
   req.session.oauthState = state;
+  req.session.oauthPurpose = purpose;
 
   try {
     res.redirect(googleAuth.buildAuthUrl(state));
@@ -601,46 +493,80 @@ app.get("/api/admin/login/google", (req, res) => {
     console.error("Google OAuth is not configured:", error);
     res.status(500).send("Google sign-in is not configured on this server.");
   }
-});
+}
+
+app.get("/api/admin/login/google", (req, res) => startGoogleLogin(req, res, "admin"));
+
+// Exchanges the Google sign-in with the ORCA API for the person's roles and a
+// user token. Returns null when the API refuses them.
+async function createOrcaSession(idToken) {
+  try {
+    return await orcaApi.createSession(idToken);
+  } catch (error) {
+    if (error instanceof orcaApi.OrcaApiError && [401, 403, 409].includes(error.status)) return null;
+    throw error;
+  }
+}
+
+async function completeAdminLogin(req, profile) {
+  if (orcaApi.isConfigured()) {
+    // Roles come from the ORCA API (granted in the employee portal), which
+    // re-verifies the Google sign-in itself.
+    const apiSession = await createOrcaSession(profile.idToken);
+    if (!apiSession || !orcaApi.canUseDashboard(apiSession.person)) return false;
+    req.session.orcaApiToken = apiSession.token;
+    req.session.rolesCheckedAt = Date.now();
+  } else if (!isAdminEmailAllowed(profile.email)) {
+    return false;
+  }
+
+  req.session.isAdmin = true;
+  req.session.adminEmail = profile.email;
+  return true;
+}
+
+async function completeProviderLogin(req, profile) {
+  if (orcaApi.isConfigured()) {
+    const apiSession = await createOrcaSession(profile.idToken);
+    if (!apiSession || !orcaApi.canUseOnboarding(apiSession.person)) return false;
+    req.session.providerOrcaToken = apiSession.token;
+    req.session.providerRolesCheckedAt = Date.now();
+  } else if (!isWorkspaceAccount(profile)) {
+    return false;
+  }
+
+  req.session.applicantId = await applicants.findOrCreateAccount({
+    email: profile.email,
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+  });
+  return true;
+}
 
 app.get("/api/admin/login/google/callback", async (req, res) => {
   const { code, state, error: oauthError } = req.query;
   const expectedState = req.session?.oauthState;
+  const purpose = req.session?.oauthPurpose === "provider" ? "provider" : "admin";
   req.session.oauthState = null;
+  req.session.oauthPurpose = null;
 
-  const failure = (reason) =>
-    res.redirect(`${adminDashboardUrl()}?login_error=${encodeURIComponent(reason)}`);
+  const landingUrl = purpose === "provider" ? onboardingUrl() : adminDashboardUrl();
+  const failure = (reason) => res.redirect(`${landingUrl}?login_error=${encodeURIComponent(reason)}`);
 
   if (oauthError) return failure("access_denied");
   if (!code || !state || state !== expectedState) return failure("invalid_request");
 
   try {
     const profile = await googleAuth.exchangeCodeForProfile(code);
+    const signedIn =
+      purpose === "provider"
+        ? await completeProviderLogin(req, profile)
+        : await completeAdminLogin(req, profile);
 
-    if (orcaApi.isConfigured()) {
-      // Roles come from the ORCA API (granted in the employee portal), which
-      // re-verifies the Google sign-in itself.
-      let apiSession;
-      try {
-        apiSession = await orcaApi.createSession(profile.idToken);
-      } catch (error) {
-        if (error instanceof orcaApi.OrcaApiError && [401, 403, 409].includes(error.status)) {
-          return failure("not_authorized");
-        }
-        throw error;
-      }
-      if (!orcaApi.canUseDashboard(apiSession.person)) return failure("not_authorized");
-      req.session.orcaApiToken = apiSession.token;
-      req.session.rolesCheckedAt = Date.now();
-    } else if (!isAdminEmailAllowed(profile.email)) {
-      return failure("not_authorized");
-    }
-
-    req.session.isAdmin = true;
-    req.session.adminEmail = profile.email;
-    res.redirect(adminDashboardUrl());
+    if (!signedIn) return failure("not_authorized");
+    res.redirect(landingUrl);
   } catch (error) {
-    console.error("Google admin login failed:", error);
+    console.error(`Google ${purpose} login failed:`, error);
     failure("login_failed");
   }
 });

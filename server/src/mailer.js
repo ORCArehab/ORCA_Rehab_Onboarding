@@ -42,21 +42,4 @@ async function notifyNewSubmission({ firstName, lastName }) {
   });
 }
 
-async function sendPasswordResetEmail({ to, firstName, resetUrl }) {
-  if (!isSmtpConfigured()) {
-    throw new Error(
-      "SMTP isn't configured (see server/.env.example) — cannot send the password reset email.",
-    );
-  }
-
-  const transporter = createTransport();
-
-  await transporter.sendMail({
-    from: process.env.NOTIFY_EMAIL_FROM || process.env.SMTP_USER,
-    to,
-    subject: "Reset your ORCA Rehab onboarding password",
-    text: `Hi ${firstName},\n\nSomeone requested a password reset for your ORCA Rehab onboarding account. If this was you, click the link below to set a new password (this link expires in 1 hour):\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.`,
-  });
-}
-
-module.exports = { notifyNewSubmission, sendPasswordResetEmail };
+module.exports = { notifyNewSubmission };

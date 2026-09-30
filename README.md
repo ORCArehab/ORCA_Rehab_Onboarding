@@ -4,7 +4,7 @@ New employee onboarding portal for ORCA Rehab.
 
 ## What it does
 
-Collects a new hire's **employee information** — name, date of birth, phone, degree, home address, SSN, driver's license photo, resume — and saves it for HR/Payroll to review. Policy agreement signing now happens through a separate tool, not this portal.
+Providers open it from **Resources** in the ORCA employee portal and sign in with their ORCA Google account. It collects their **employee information** — name, date of birth, phone, degree, home address, SSN, driver's license photo, resume — and saves it for HR/Payroll to review. Policy agreement signing now happens through a separate tool, not this portal.
 
 ## Getting started (frontend)
 
@@ -79,16 +79,16 @@ Set these in `server/.env` too (see `.env.example` for the full list):
   ```
 - `SESSION_SECRET` — any long random string, for signing the admin login session.
 
-### HR/Payroll admin login (Google Workspace SSO)
+### Google Workspace SSO (providers and HR/Payroll)
 
-HR/Payroll signs in with their company Google account — there's no separate username/password to create or rotate.
+Everyone signs in with their company Google account — there are no separate usernames or passwords. Providers sign in on the onboarding page itself, HR/Payroll at `/admin`; both go through the same Google OAuth client and redirect URI.
 
 1. Create an OAuth client at [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials) (type: **Web application**). On the OAuth consent screen, set the user type to **Internal** — this restricts sign-in to accounts in your Workspace org at the Google level, before this app's own checks ever run.
 2. Add an Authorized redirect URI of `{APP_URL}/api/admin/login/google/callback` — e.g. `http://localhost:5173/api/admin/login/google/callback` for local dev, or your production domain's equivalent.
 3. Copy the client ID and secret into `server/.env` as `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
 4. Set `GOOGLE_WORKSPACE_DOMAIN` to your company's domain (e.g. `orcarehab.com`).
-5. **Recommended:** set `ORCA_API_URL` and `ORCA_API_KEY` to use the roles shared across ORCA apps. Anyone with the `HR` or `ADMIN` role (granted in the employee portal at `/admin/people`) can sign in, and access is re-checked against the API every minute, so revoking a role or deactivating someone locks them out within a minute. If the API can't be reached, the dashboard refuses access rather than assuming. With these set, `ADMIN_ALLOWED_EMAILS` is ignored.
-6. Otherwise (e.g. local dev), set `ADMIN_ALLOWED_EMAILS` to a comma-separated list of the specific people who should have access (e.g. `hr@orcarehab.com,payroll@orcarehab.com`). This dashboard holds SSNs and other PII, and an "Internal" consent screen admits your *whole* Workspace org — leaving this blank falls back to allowing anyone on `GOOGLE_WORKSPACE_DOMAIN`, which is broader than most companies want for this page.
+5. **Recommended:** set `ORCA_API_URL` and `ORCA_API_KEY` to use the roles shared across ORCA apps, granted in the employee portal at `/admin/people`. Only people with the `PROVIDER` role can fill out onboarding (their onboarding account is created the first time they sign in, matched by email), and only people with `HR` or `ADMIN` can use the dashboard. Access is re-checked against the API every minute, so revoking a role or deactivating someone locks them out within a minute. If the API can't be reached, access is refused rather than assumed. With these set, `ADMIN_ALLOWED_EMAILS` is ignored.
+6. Otherwise (e.g. local dev), anyone on `GOOGLE_WORKSPACE_DOMAIN` can fill out onboarding, and `ADMIN_ALLOWED_EMAILS` should be set to a comma-separated list of the specific people who should have dashboard access (e.g. `hr@orcarehab.com,payroll@orcarehab.com`). This dashboard holds SSNs and other PII, and an "Internal" consent screen admits your *whole* Workspace org — leaving this blank falls back to allowing anyone on `GOOGLE_WORKSPACE_DOMAIN`, which is broader than most companies want for this page.
 
 Optionally, fill in the `SMTP_*` and `NOTIFY_EMAIL_TO` variables to get an email notification whenever a new submission comes in. Leave them blank to skip notifications entirely (nothing breaks — it just logs a warning and moves on).
 
@@ -127,7 +127,7 @@ In the Vercel project settings, add every variable from `server/.env` — Supaba
 - `DATABASE_URL` — **must** be Supabase's pooled connection string (Project Settings → Database → **Connection pooling**, port `6543`), not the direct `:5432` one. Every function invocation opens its own connection and direct Postgres runs out of slots fast.
 - `FRONTEND_ORIGIN` — leave **unset**. Setting it turns on CORS and switches the cookie to `SameSite=None`, which you only want if you later split the frontend onto its own domain.
 - `VITE_API_URL` — leave **unset**. The frontend falls back to relative `/api` paths, which is exactly right when both halves share a domain.
-- `APP_URL` — set to your production domain (e.g. `https://onboarding.orcarehab.com`). It's used both for the applicant password-reset email link and to build the Google OAuth redirect URI, which must also be added as an Authorized redirect URI on the OAuth client in Google Cloud Console.
+- `APP_URL` — set to your production domain (e.g. `https://onboarding.orcarehab.com`). It's where providers land after signing in (link to it from Resources in the portal) and builds the Google OAuth redirect URI, which must also be added as an Authorized redirect URI on the OAuth client in Google Cloud Console.
 
 Don't set `PORT`; Vercel manages that.
 

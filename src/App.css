@@ -155,20 +155,6 @@ input:focus-visible {
   margin-bottom: 38px;
 }
 
-.link-button {
-  justify-self: start;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--blue);
-  font-weight: 700;
-  font-size: 0.85rem;
-}
-
-.link-button:hover {
-  text-decoration: underline;
-}
-
 .auth-error {
   margin: 0;
   color: #c0392b;

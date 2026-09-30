@@ -8,6 +8,10 @@
 // Roles allowed into this app's HR/Payroll dashboard.
 const DASHBOARD_ROLES = ["HR", "ADMIN"];
 
+// Role allowed to fill out the onboarding form itself. The portal lists this
+// app under Resources for the same people.
+const ONBOARDING_ROLE = "PROVIDER";
+
 class OrcaApiError extends Error {
   constructor(status) {
     super(`ORCA API responded ${status}`);
@@ -55,4 +59,8 @@ function canUseDashboard(person) {
   return Boolean(person?.active) && person.roles.some((role) => DASHBOARD_ROLES.includes(role));
 }
 
-module.exports = { OrcaApiError, isConfigured, createSession, getMe, canUseDashboard };
+function canUseOnboarding(person) {
+  return Boolean(person?.active) && person.roles.includes(ONBOARDING_ROLE);
+}
+
+module.exports = { OrcaApiError, isConfigured, createSession, getMe, canUseDashboard, canUseOnboarding };

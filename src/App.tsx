@@ -6,8 +6,6 @@ import { uploadFile } from "./uploads";
 import type { UploadedFile } from "./uploads";
 import "./App.css";
 
-type Page = "auth" | "forgot-password" | "reset-password";
-
 interface ApplicantProfile {
   firstName: string;
   lastName: string;
@@ -367,202 +365,44 @@ function DocumentField({
   );
 }
 
-function AuthPage({
-  mode,
-  onModeChange,
-  onSubmit,
-  onForgotPassword,
-  isSubmitting,
-  error,
-}: {
-  mode: "login" | "signup";
-  onModeChange: (mode: "login" | "signup") => void;
-  onSubmit: (event: SubmitEvent<HTMLFormElement>) => void;
-  onForgotPassword: () => void;
-  isSubmitting: boolean;
-  error: string | null;
-}) {
+// Google redirects back with ?login_error=<reason> when sign-in doesn't end in
+// a session — see the /api/admin/login/google/callback handler in
+// server/src/app.js for where each of these comes from.
+const LOGIN_ERROR_MESSAGES: Record<string, string> = {
+  access_denied: "Sign-in was cancelled.",
+  invalid_request: "That sign-in link expired or was already used. Please try again.",
+  not_authorized:
+    "Onboarding is for ORCA providers. If you're a provider, ask HR to give your account the Provider role.",
+  login_failed: "Something went wrong signing you in. Please try again.",
+};
+
+function SignInPage({ error }: { error: string | null }) {
   return (
     <section className="form-card auth-card">
       <p className="eyebrow">ORCA Rehab</p>
-      <h1>{mode === "login" ? "Log In" : "Create Your Account"}</h1>
+      <h1>Provider Onboarding</h1>
       <p className="welcome-description">
-        {mode === "login"
-          ? "Log in to continue your onboarding where you left off."
-          : "Your progress is saved automatically as you go, so you can pick up where you left off."}
+        Sign in with your ORCA Google account. Your progress is saved as you go,
+        so you can pick up where you left off.
       </p>
 
-      <form className="employee-form" onSubmit={onSubmit}>
-        {mode === "signup" && (
-          <div className="field-row">
-            <label className="form-field">
-              <span>First name</span>
-              <input type="text" name="firstName" autoComplete="given-name" required />
-            </label>
-            <label className="form-field">
-              <span>Last name</span>
-              <input type="text" name="lastName" autoComplete="family-name" required />
-            </label>
-          </div>
-        )}
+      {error && <p className="auth-error">{error}</p>}
 
-        <label className="form-field">
-          <span>Email</span>
-          <input type="email" name="email" autoComplete="email" required />
-        </label>
-
-        <label className="form-field">
-          <span>Password</span>
-          <input
-            type="password"
-            name="password"
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-            minLength={8}
-            required
-          />
-          {mode === "signup" && <small>At least 8 characters.</small>}
-        </label>
-
-        {mode === "login" && (
-          <button type="button" className="link-button" onClick={onForgotPassword}>
-            Forgot password?
-          </button>
-        )}
-
-        {error && <p className="auth-error">{error}</p>}
-
-        <div className="form-footer">
-          <button
-            type="button"
-            className="back-button"
-            onClick={() => onModeChange(mode === "login" ? "signup" : "login")}
-          >
-            {mode === "login" ? "Need an account? Sign up" : "Already have an account? Log in"}
-          </button>
-
-          <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Please wait…" : mode === "login" ? "Log in" : "Sign up"}
-            <span aria-hidden="true">→</span>
-          </button>
-        </div>
-      </form>
-    </section>
-  );
-}
-
-function ForgotPasswordPage({
-  onSubmit,
-  onBack,
-  isSubmitting,
-  submitted,
-}: {
-  onSubmit: (email: string) => void;
-  onBack: () => void;
-  isSubmitting: boolean;
-  submitted: boolean;
-}) {
-  return (
-    <section className="form-card auth-card">
-      <p className="eyebrow">ORCA Rehab</p>
-      <h1>Reset Your Password</h1>
-
-      {submitted ? (
-        <>
-          <p className="welcome-description">
-            If an account exists for that email, we've sent a link to reset your
-            password. Check your inbox (and spam folder).
-          </p>
-          <button className="primary-button" type="button" onClick={onBack}>
-            Back to log in
-            <span aria-hidden="true">→</span>
-          </button>
-        </>
-      ) : (
-        <form
-          className="employee-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const email = String(new FormData(event.currentTarget).get("email") ?? "");
-            onSubmit(email);
-          }}
-        >
-          <label className="form-field">
-            <span>Email</span>
-            <input type="email" name="email" autoComplete="email" required />
-          </label>
-
-          <div className="form-footer">
-            <button type="button" className="back-button" onClick={onBack}>
-              ← Back to log in
-            </button>
-            <button className="primary-button" type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Sending…" : "Send reset link"}
-              <span aria-hidden="true">→</span>
-            </button>
-          </div>
-        </form>
-      )}
-    </section>
-  );
-}
-
-function ResetPasswordPage({
-  onSubmit,
-  isSubmitting,
-  error,
-  success,
-}: {
-  onSubmit: (newPassword: string) => void;
-  isSubmitting: boolean;
-  error: string | null;
-  success: boolean;
-}) {
-  return (
-    <section className="form-card auth-card">
-      <p className="eyebrow">ORCA Rehab</p>
-      <h1>Set a New Password</h1>
-
-      {success ? (
-        <p className="welcome-description">
-          Your password has been reset. You can now log in with your new password.
-        </p>
-      ) : (
-        <form
-          className="employee-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const newPassword = String(new FormData(event.currentTarget).get("newPassword") ?? "");
-            onSubmit(newPassword);
-          }}
-        >
-          <label className="form-field">
-            <span>New password</span>
-            <input
-              type="password"
-              name="newPassword"
-              autoComplete="new-password"
-              minLength={8}
-              required
-            />
-            <small>At least 8 characters.</small>
-          </label>
-
-          {error && <p className="auth-error">{error}</p>}
-
-          <div className="form-footer">
-            <button className="primary-button" type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Saving…" : "Set new password"}
-              <span aria-hidden="true">→</span>
-            </button>
-          </div>
-        </form>
-      )}
+      <button
+        className="primary-button"
+        type="button"
+        // Full-page navigation, not a fetch — the browser has to leave the app
+        // for Google's sign-in and come back.
+        onClick={() => (window.location.href = `${API_BASE_URL}/api/applicant/login/google`)}
+      >
+        Continue with Google
+        <span aria-hidden="true">→</span>
+      </button>
     </section>
   );
 }
 
 function App() {
-  const [page, setPage] = useState<Page>("auth");
   const [form, setForm] = useState<EmployeeForm>(initialForm);
   const [documents, setDocuments] = useState<DocumentsState>(initialDocuments);
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -572,17 +412,11 @@ function App() {
   const [profile, setProfile] = useState<ApplicantProfile | null>(null);
   const [draftLoaded, setDraftLoaded] = useState(false);
 
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
-  const [authSubmitting, setAuthSubmitting] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-
-  const [forgotPasswordSubmitting, setForgotPasswordSubmitting] = useState(false);
-  const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
-
-  const [resetToken, setResetToken] = useState<string | null>(null);
-  const [resetSubmitting, setResetSubmitting] = useState(false);
-  const [resetError, setResetError] = useState<string | null>(null);
-  const [resetSuccess, setResetSuccess] = useState(false);
+  // Read once, then cleared from the address bar so a reload doesn't repeat it.
+  const [loginError] = useState(() => {
+    const reason = new URLSearchParams(window.location.search).get("login_error");
+    return reason ? (LOGIN_ERROR_MESSAGES[reason] ?? LOGIN_ERROR_MESSAGES.login_failed) : null;
+  });
 
   function applyDraft(draft: {
     employee: Partial<EmployeeForm>;
@@ -631,7 +465,7 @@ function App() {
     setProfile(nextProfile);
     setApplicantAuthStatus("authenticated");
 
-    // Pre-fill from the name they signed up with — the draft's own saved
+    // Pre-fill from the name on their Google account — the draft's own saved
     // values (applied below, once there's anything to apply) take
     // precedence over this if they've since edited it on the form itself.
     setForm((currentForm) => ({
@@ -658,17 +492,8 @@ function App() {
     }
   }
 
-  // On mount: a password-reset link takes priority over the normal session
-  // check — someone can click a reset link while still logged in elsewhere.
   useEffect(() => {
-    const token = new URLSearchParams(window.location.search).get("reset-token");
-
-    if (token) {
-      setResetToken(token);
-      setPage("reset-password");
-      setApplicantAuthStatus("unauthenticated");
-      return;
-    }
+    if (loginError) window.history.replaceState(null, "", window.location.pathname);
 
     loadSessionAndDraft().catch((error) => {
       console.error("Failed to check session:", error);
@@ -934,90 +759,6 @@ function App() {
     }
   };
 
-  const handleAuthSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setAuthError(null);
-    setAuthSubmitting(true);
-
-    const formData = new FormData(event.currentTarget);
-    const email = String(formData.get("email") ?? "");
-    const password = String(formData.get("password") ?? "");
-
-    try {
-      const endpoint = authMode === "signup" ? "signup" : "login";
-      const body =
-        authMode === "signup"
-          ? {
-              firstName: String(formData.get("firstName") ?? ""),
-              lastName: String(formData.get("lastName") ?? ""),
-              email,
-              password,
-            }
-          : { email, password };
-
-      const response = await fetch(`${API_BASE_URL}/api/applicant/${endpoint}`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const responseBody = await response.json().catch(() => null);
-        throw new Error(responseBody?.error ?? "Something went wrong. Please try again.");
-      }
-
-      await loadSessionAndDraft();
-    } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Something went wrong.");
-    } finally {
-      setAuthSubmitting(false);
-    }
-  };
-
-  const handleForgotPasswordSubmit = async (email: string) => {
-    setForgotPasswordSubmitting(true);
-
-    try {
-      await fetch(`${API_BASE_URL}/api/applicant/forgot-password`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-    } catch (error) {
-      console.error("Failed to request password reset:", error);
-    } finally {
-      setForgotPasswordSubmitting(false);
-      setForgotPasswordSent(true);
-    }
-  };
-
-  const handleResetPasswordSubmit = async (newPassword: string) => {
-    setResetError(null);
-    setResetSubmitting(true);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/applicant/reset-password`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: resetToken, newPassword }),
-      });
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.error ?? "Could not reset your password.");
-      }
-
-      setResetSuccess(true);
-    } catch (error) {
-      setResetError(error instanceof Error ? error.message : "Something went wrong.");
-    } finally {
-      setResetSubmitting(false);
-    }
-  };
-
   const handleLogout = async () => {
     try {
       await fetch(`${API_BASE_URL}/api/applicant/logout`, {
@@ -1034,7 +775,6 @@ function App() {
     setDocuments(initialDocuments);
     setDraftLoaded(false);
     setIsSubmitted(false);
-    setPage("auth");
   };
 
   // Loads John Doe's fixed sample documents (server/sample-data/john-doe/)
@@ -1132,54 +872,10 @@ function App() {
   }
 
   if (applicantAuthStatus !== "authenticated") {
-    if (page === "forgot-password") {
-      return (
-        <main className="app-shell">
-          <DevNav onLoadSample={handleLoadSample} />
-          <ForgotPasswordPage
-            onSubmit={handleForgotPasswordSubmit}
-            onBack={() => {
-              setAuthMode("login");
-              setPage("auth");
-            }}
-            isSubmitting={forgotPasswordSubmitting}
-            submitted={forgotPasswordSent}
-          />
-        </main>
-      );
-    }
-
-    if (page === "reset-password") {
-      return (
-        <main className="app-shell">
-          <DevNav onLoadSample={handleLoadSample} />
-          <ResetPasswordPage
-            onSubmit={handleResetPasswordSubmit}
-            isSubmitting={resetSubmitting}
-            error={resetError}
-            success={resetSuccess}
-          />
-        </main>
-      );
-    }
-
     return (
       <main className="app-shell">
         <DevNav onLoadSample={handleLoadSample} />
-        <AuthPage
-          mode={authMode}
-          onModeChange={(mode) => {
-            setAuthMode(mode);
-            setAuthError(null);
-          }}
-          onSubmit={handleAuthSubmit}
-          onForgotPassword={() => {
-            setForgotPasswordSent(false);
-            setPage("forgot-password");
-          }}
-          isSubmitting={authSubmitting}
-          error={authError}
-        />
+        <SignInPage error={loginError} />
       </main>
     );
   }

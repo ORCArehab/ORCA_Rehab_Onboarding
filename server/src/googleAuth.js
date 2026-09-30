@@ -26,7 +26,7 @@ function getClient() {
 
 // `hd` just pre-selects the right Google account in the picker — it's a UX
 // hint, not a security boundary. The actual access decision happens after
-// the token exchange, in auth.js's isAdminEmailAllowed().
+// the token exchange — see the login callback in app.js.
 function buildAuthUrl(state) {
   const client = getClient();
   const domain = process.env.GOOGLE_WORKSPACE_DOMAIN;
@@ -64,6 +64,8 @@ async function exchangeCodeForProfile(code) {
   return {
     email: payload.email.toLowerCase(),
     name: payload.name || payload.email,
+    firstName: payload.given_name || "",
+    lastName: payload.family_name || "",
     hostedDomain: payload.hd || null,
     // Passed on to the ORCA API, which verifies it independently.
     idToken: tokens.id_token,
