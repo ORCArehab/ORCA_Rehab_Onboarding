@@ -7,6 +7,7 @@ const db = require("./db");
 const { createSignedUpload, resolveUploadedFile, downloadFile, deleteFiles, signPath } = require("./storage");
 const { isAdminEmailAllowed, requireAuth } = require("./auth");
 const googleAuth = require("./googleAuth");
+const orcaApi = require("./orcaApi");
 const { notifyNewSubmission, sendPasswordResetEmail } = require("./mailer");
 const documentVerification = require("./documentVerification");
 const { buildCredentialingZip } = require("./credentialingPackage");
@@ -616,7 +617,22 @@ app.get("/api/admin/login/google/callback", async (req, res) => {
   try {
     const profile = await googleAuth.exchangeCodeForProfile(code);
 
-    if (!isAdminEmailAllowed(profile.email)) {
+    if (orcaApi.isConfigured()) {
+      // Roles come from the ORCA API (granted in the employee portal), which
+      // re-verifies the Google sign-in itself.
+      let apiSession;
+      try {
+        apiSession = await orcaApi.createSession(profile.idToken);
+      } catch (error) {
+        if (error instanceof orcaApi.OrcaApiError && [401, 403, 409].includes(error.status)) {
+          return failure("not_authorized");
+        }
+        throw error;
+      }
+      if (!orcaApi.canUseDashboard(apiSession.person)) return failure("not_authorized");
+      req.session.orcaApiToken = apiSession.token;
+      req.session.rolesCheckedAt = Date.now();
+    } else if (!isAdminEmailAllowed(profile.email)) {
       return failure("not_authorized");
     }
 

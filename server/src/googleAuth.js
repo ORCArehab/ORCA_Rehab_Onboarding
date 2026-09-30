@@ -65,6 +65,8 @@ async function exchangeCodeForProfile(code) {
     email: payload.email.toLowerCase(),
     name: payload.name || payload.email,
     hostedDomain: payload.hd || null,
+    // Passed on to the ORCA API, which verifies it independently.
+    idToken: tokens.id_token,
   };
 }
 
