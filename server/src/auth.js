@@ -1,21 +1,30 @@
-// bcryptjs, not bcrypt: the latter is a native addon that has to compile for
-// the deployment target, which is fragile on serverless hosts. This is pure
-// JS with an identical hash/compare API and the same hash format.
-const bcrypt = require("bcryptjs");
+// Decides whether a Google account that just completed SSO is allowed into
+// the HR/Payroll dashboard. This is the actual access-control decision —
+// Google only proves *which* Google account signed in, not that it belongs
+// to HR/Payroll.
+function isAdminEmailAllowed(email) {
+  const normalized = email.toLowerCase();
 
-async function verifyLogin(username, password) {
-  const expectedUsername = process.env.ADMIN_USERNAME;
-  const passwordHash = process.env.ADMIN_PASSWORD_HASH;
+  const allowedEmails = (process.env.ADMIN_ALLOWED_EMAILS || "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
 
-  if (!expectedUsername || !passwordHash) {
-    throw new Error(
-      "ADMIN_USERNAME and ADMIN_PASSWORD_HASH must be set in the server's .env file.",
-    );
+  if (allowedEmails.length > 0) {
+    return allowedEmails.includes(normalized);
   }
 
-  if (username !== expectedUsername) return false;
+  // No explicit allowlist — fall back to "anyone on the company's Workspace
+  // domain". Set ADMIN_ALLOWED_EMAILS in .env to restrict this to specific
+  // HR/Payroll staff instead of everyone at the company.
+  const domain = process.env.GOOGLE_WORKSPACE_DOMAIN;
+  if (domain) {
+    return normalized.endsWith(`@${domain.toLowerCase()}`);
+  }
 
-  return bcrypt.compare(password, passwordHash);
+  // Neither is configured — refuse everyone rather than silently letting any
+  // Google account reach submissions containing SSNs and other PII.
+  return false;
 }
 
 function requireAuth(req, res, next) {
@@ -23,4 +32,4 @@ function requireAuth(req, res, next) {
   res.status(401).json({ error: "Not authenticated." });
 }
 
-module.exports = { verifyLogin, requireAuth };
+module.exports = { isAdminEmailAllowed, requireAuth };

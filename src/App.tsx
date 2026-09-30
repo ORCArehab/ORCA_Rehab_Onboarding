@@ -6,7 +6,7 @@ import { uploadFile } from "./uploads";
 import type { UploadedFile } from "./uploads";
 import "./App.css";
 
-type Page = "welcome" | "auth" | "forgot-password" | "reset-password" | "employee-info";
+type Page = "auth" | "forgot-password" | "reset-password";
 
 interface ApplicantProfile {
   firstName: string;
@@ -237,33 +237,12 @@ function buildFilesPayload(documents: DocumentsState) {
   return files;
 }
 
-const DEV_PAGES: { label: string; page: Page; submitted?: boolean }[] = [
-  { label: "Welcome", page: "welcome" },
-  { label: "Employee info", page: "employee-info" },
-  { label: "Success", page: "employee-info", submitted: true },
-];
-
-function DevNav({
-  onNavigate,
-  onLoadSample,
-}: {
-  onNavigate: (page: Page, submitted: boolean) => void;
-  onLoadSample?: () => void;
-}) {
+function DevNav({ onLoadSample }: { onLoadSample?: () => void }) {
   if (!import.meta.env.DEV) return null;
 
   return (
     <div className="dev-nav">
       <span>DEV</span>
-      {DEV_PAGES.map(({ label, page, submitted }) => (
-        <button
-          key={label}
-          type="button"
-          onClick={() => onNavigate(page, Boolean(submitted))}
-        >
-          {label}
-        </button>
-      ))}
       {onLoadSample && (
         <button type="button" onClick={onLoadSample}>
           Load Sample: John Doe
@@ -583,7 +562,7 @@ function ResetPasswordPage({
 }
 
 function App() {
-  const [page, setPage] = useState<Page>("welcome");
+  const [page, setPage] = useState<Page>("auth");
   const [form, setForm] = useState<EmployeeForm>(initialForm);
   const [documents, setDocuments] = useState<DocumentsState>(initialDocuments);
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -664,7 +643,6 @@ function App() {
     if (nextProfile.hasSubmitted) {
       setIsSubmitted(true);
       setDraftLoaded(true);
-      setPage("employee-info");
       return;
     }
 
@@ -677,7 +655,6 @@ function App() {
       console.error("Failed to load draft:", error);
     } finally {
       setDraftLoaded(true);
-      setPage("employee-info");
     }
   }
 
@@ -895,7 +872,7 @@ function App() {
       }
 
       if (doc.status === "mismatch" || doc.status === "error") {
-        alert(`Please fix your ${label} before submitting: ${doc.reason ?? "it doesn't look right."}`);
+        alert(`Please fix your ${label} before saving: ${doc.reason ?? "it doesn't look right."}`);
         return;
       }
     }
@@ -933,13 +910,13 @@ function App() {
 
       if (!response.ok) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.error ?? `Submission failed with status ${response.status}`);
+        throw new Error(body?.error ?? `Save failed with status ${response.status}`);
       }
 
       setIsSubmitted(true);
       setProfile((current) => (current ? { ...current, hasSubmitted: true } : current));
     } catch (error) {
-      console.error("Failed to submit onboarding data:", error);
+      console.error("Failed to save onboarding data:", error);
 
       if (error instanceof TypeError) {
         alert(
@@ -949,17 +926,12 @@ function App() {
         alert(
           error instanceof Error
             ? error.message
-            : "Something went wrong submitting your information.",
+            : "Something went wrong saving your information.",
         );
       }
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleDevNavigate = (targetPage: Page, submitted: boolean) => {
-    setPage(targetPage);
-    setIsSubmitted(submitted);
   };
 
   const handleAuthSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
@@ -1062,14 +1034,17 @@ function App() {
     setDocuments(initialDocuments);
     setDraftLoaded(false);
     setIsSubmitted(false);
-    setPage("welcome");
+    setPage("auth");
   };
 
   // Loads John Doe's fixed sample documents (server/sample-data/john-doe/)
   // through the exact same code path as picking a file by hand, so this
-  // exercises the real upload + AI verification pipeline end-to-end.
+  // exercises the real upload + AI verification pipeline end-to-end. Faking
+  // "authenticated" here (dev-only, gated by DevNav's import.meta.env.DEV
+  // check) is what lets this preview the form without a real login — the
+  // form itself is now reached purely by auth status, not a page value.
   const handleLoadSample = async () => {
-    setPage("employee-info");
+    setApplicantAuthStatus("authenticated");
     setIsSubmitted(false);
 
     setForm((currentForm) => ({
@@ -1104,7 +1079,7 @@ function App() {
     // sample PDFs contain their own "this is a synthetic test document, not
     // a real DEA certificate" disclaimer text, which the AI correctly reads
     // and flags — appropriate for a real submission, but it would make this
-    // one-click fixture unable to ever reach Submit. This keeps the sample
+    // one-click fixture unable to ever reach Save. This keeps the sample
     // reliably usable while being explicit in the UI that it wasn't really
     // checked.
     async function loadSampleDocument(key: AllDocKey, filename: string) {
@@ -1152,55 +1127,45 @@ function App() {
     }
   };
 
-  if (page === "welcome") {
-    return (
-      <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
-        <section className="welcome-card">
-          <img
-            className="welcome-logo"
-            src={logo}
-            alt="ORCA Rehab"
-          />
-
-          <div className="welcome-content">
-            <p className="eyebrow">NEW EMPLOYEE PORTAL</p>
-
-            <h1>
-              Welcome to <span>ORCA Rehab</span>
-            </h1>
-
-            <p className="welcome-description">
-              We’re excited to have you join our team. This secure onboarding
-              portal will guide you through the information needed to get
-              started.
-            </p>
-
-            <button
-              className="primary-button"
-              type="button"
-              disabled={applicantAuthStatus === "checking"}
-              onClick={() =>
-                setPage(applicantAuthStatus === "authenticated" ? "employee-info" : "auth")
-              }
-            >
-              Continue
-              <span aria-hidden="true">→</span>
-            </button>
-
-            <p className="security-message">
-              Your information is kept private and secure.
-            </p>
-          </div>
-        </section>
-      </main>
-    );
+  if (applicantAuthStatus === "checking") {
+    return <main className="app-shell" />;
   }
 
-  if (page === "auth") {
+  if (applicantAuthStatus !== "authenticated") {
+    if (page === "forgot-password") {
+      return (
+        <main className="app-shell">
+          <DevNav onLoadSample={handleLoadSample} />
+          <ForgotPasswordPage
+            onSubmit={handleForgotPasswordSubmit}
+            onBack={() => {
+              setAuthMode("login");
+              setPage("auth");
+            }}
+            isSubmitting={forgotPasswordSubmitting}
+            submitted={forgotPasswordSent}
+          />
+        </main>
+      );
+    }
+
+    if (page === "reset-password") {
+      return (
+        <main className="app-shell">
+          <DevNav onLoadSample={handleLoadSample} />
+          <ResetPasswordPage
+            onSubmit={handleResetPasswordSubmit}
+            isSubmitting={resetSubmitting}
+            error={resetError}
+            success={resetSuccess}
+          />
+        </main>
+      );
+    }
+
     return (
       <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
+        <DevNav onLoadSample={handleLoadSample} />
         <AuthPage
           mode={authMode}
           onModeChange={(mode) => {
@@ -1219,48 +1184,17 @@ function App() {
     );
   }
 
-  if (page === "forgot-password") {
-    return (
-      <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
-        <ForgotPasswordPage
-          onSubmit={handleForgotPasswordSubmit}
-          onBack={() => {
-            setAuthMode("login");
-            setPage("auth");
-          }}
-          isSubmitting={forgotPasswordSubmitting}
-          submitted={forgotPasswordSent}
-        />
-      </main>
-    );
-  }
-
-  if (page === "reset-password") {
-    return (
-      <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
-        <ResetPasswordPage
-          onSubmit={handleResetPasswordSubmit}
-          isSubmitting={resetSubmitting}
-          error={resetError}
-          success={resetSuccess}
-        />
-      </main>
-    );
-  }
-
   if (isSubmitted) {
     return (
       <main className="app-shell">
-        <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
+        <DevNav onLoadSample={handleLoadSample} />
         <section className="form-card success-card">
           <div className="success-icon">✓</div>
-          <p className="eyebrow">INFORMATION RECEIVED</p>
+          <p className="eyebrow">INFORMATION SAVED</p>
           <h1>Thank you, {form.firstName || profile?.firstName}.</h1>
           <p>
-            Your employee information has been submitted. Our team will
-            follow up with the next steps of onboarding.
+            Your employee information has been saved. Our team will follow up
+            with the next steps of onboarding.
           </p>
         </section>
       </main>
@@ -1269,31 +1203,18 @@ function App() {
 
   return (
     <main className="app-shell">
-      <DevNav onNavigate={handleDevNavigate} onLoadSample={handleLoadSample} />
+      <DevNav onLoadSample={handleLoadSample} />
       <section className="form-card">
         <div className="page-actions">
-          <button
-            className="back-button"
-            type="button"
-            onClick={() => setPage("welcome")}
-          >
-            ← Back
+          <button className="back-button" type="button" onClick={handleLogout}>
+            Sign out
           </button>
-
-          {applicantAuthStatus === "authenticated" && (
-            <button className="back-button" type="button" onClick={handleLogout}>
-              Sign out
-            </button>
-          )}
         </div>
 
         <header className="form-header">
           <img className="form-logo" src={logo} alt="ORCA Rehab" />
-
-          <div>
-            <h1>Employee Information</h1>
-            <p>Please enter your legal information exactly as it appears on official records.</p>
-          </div>
+          <h1>Employee Information</h1>
+          <p>Please enter your legal information exactly as it appears on official records.</p>
         </header>
 
         <form className="employee-form" onSubmit={handleEmployeeSubmit}>
@@ -1304,7 +1225,7 @@ function App() {
             description="Your legal name and contact details."
           />
 
-          <div className="field-row">
+          <div className="field-row field-row-3">
             <label className="form-field">
               <span>First name</span>
               <input
@@ -1334,9 +1255,7 @@ function App() {
                 required
               />
             </label>
-          </div>
 
-          <div className="field-row">
             <label className="form-field">
               <span>Date of birth</span>
               <input
@@ -1350,7 +1269,9 @@ function App() {
                 required
               />
             </label>
+          </div>
 
+          <div className="field-row field-row-3">
             <label className="form-field">
               <span>State of birth</span>
               <input
@@ -1364,35 +1285,35 @@ function App() {
                 required
               />
             </label>
+
+            <label className="form-field">
+              <span>Phone number</span>
+              <input
+                type="tel"
+                name="phone"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="(555) 123-4567"
+                maxLength={14}
+                value={form.phone}
+                onChange={(event) => updateField("phone", event.target.value)}
+                required
+              />
+            </label>
+
+            <label className="form-field">
+              <span>Home address</span>
+              <input
+                type="text"
+                name="address"
+                autoComplete="street-address"
+                placeholder="Street address, city, state, ZIP code"
+                value={form.address}
+                onChange={(event) => updateField("address", event.target.value)}
+                required
+              />
+            </label>
           </div>
-
-          <label className="form-field">
-            <span>Phone number</span>
-            <input
-              type="tel"
-              name="phone"
-              inputMode="tel"
-              autoComplete="tel"
-              placeholder="(555) 123-4567"
-              maxLength={14}
-              value={form.phone}
-              onChange={(event) => updateField("phone", event.target.value)}
-              required
-            />
-          </label>
-
-          <label className="form-field">
-            <span>Home address</span>
-            <input
-              type="text"
-              name="address"
-              autoComplete="street-address"
-              placeholder="Street address, city, state, ZIP code"
-              value={form.address}
-              onChange={(event) => updateField("address", event.target.value)}
-              required
-            />
-          </label>
 
           <label className="form-field">
             <span>Social Security number</span>
@@ -1421,7 +1342,7 @@ function App() {
             description="Your role, degree, and National Provider Identifier."
           />
 
-          <div className="field-row">
+          <div className="field-row field-row-3">
             <label className="form-field">
               <span>Provider role</span>
               <select
@@ -1451,22 +1372,22 @@ function App() {
                 required
               />
             </label>
-          </div>
 
-          <label className="form-field">
-            <span>NPI</span>
-            <input
-              type="text"
-              name="npi"
-              inputMode="numeric"
-              autoComplete="off"
-              placeholder="10-digit National Provider Identifier"
-              maxLength={10}
-              value={form.npi}
-              onChange={(event) => updateField("npi", event.target.value)}
-              required
-            />
-          </label>
+            <label className="form-field">
+              <span>NPI</span>
+              <input
+                type="text"
+                name="npi"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="10-digit National Provider Identifier"
+                maxLength={10}
+                value={form.npi}
+                onChange={(event) => updateField("npi", event.target.value)}
+                required
+              />
+            </label>
+          </div>
 
           <SectionHeader
             step={3}
@@ -1475,7 +1396,7 @@ function App() {
             description="Your CAQH, NPPES, and PECOS account credentials."
           />
 
-          <div className="field-row">
+          <div className="field-row field-row-3">
             <label className="form-field">
               <span>CAQH username</span>
               <input
@@ -1490,21 +1411,6 @@ function App() {
             </label>
 
             <label className="form-field">
-              <span>CAQH password</span>
-              <input
-                type="password"
-                autoComplete="off"
-                value={form.caqhPassword}
-                onChange={(event) =>
-                  updateField("caqhPassword", event.target.value)
-                }
-                required
-              />
-            </label>
-          </div>
-
-          <div className="field-row">
-            <label className="form-field">
               <span>NPPES username</span>
               <input
                 type="text"
@@ -1518,21 +1424,6 @@ function App() {
             </label>
 
             <label className="form-field">
-              <span>NPPES password</span>
-              <input
-                type="password"
-                autoComplete="off"
-                value={form.nppesPassword}
-                onChange={(event) =>
-                  updateField("nppesPassword", event.target.value)
-                }
-                required
-              />
-            </label>
-          </div>
-
-          <div className="field-row">
-            <label className="form-field">
               <span>PECOS username</span>
               <input
                 type="text"
@@ -1540,6 +1431,34 @@ function App() {
                 value={form.pecosUsername}
                 onChange={(event) =>
                   updateField("pecosUsername", event.target.value)
+                }
+                required
+              />
+            </label>
+          </div>
+
+          <div className="field-row field-row-3">
+            <label className="form-field">
+              <span>CAQH password</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={form.caqhPassword}
+                onChange={(event) =>
+                  updateField("caqhPassword", event.target.value)
+                }
+                required
+              />
+            </label>
+
+            <label className="form-field">
+              <span>NPPES password</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={form.nppesPassword}
+                onChange={(event) =>
+                  updateField("nppesPassword", event.target.value)
                 }
                 required
               />
@@ -1648,7 +1567,7 @@ function App() {
             <p>Fields marked required must be completed.</p>
 
             <button className="primary-button" type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Submitting…" : "Submit"}
+              {isSubmitting ? "Saving…" : "Save"}
               <span aria-hidden="true">→</span>
             </button>
           </div>

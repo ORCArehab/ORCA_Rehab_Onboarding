@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { SubmitEvent } from "react";
 import logo from "./assets/orca-logo.png";
 import { API_BASE_URL } from "./apiConfig";
 import "./App.css";
@@ -186,19 +185,31 @@ function DocumentPreview({
   );
 }
 
+// Google redirects back with ?login_error=<reason> when SSO doesn't end in
+// an authenticated session — see the /api/admin/login/google/callback
+// handler in server/src/app.js for where each of these comes from.
+const LOGIN_ERROR_MESSAGES: Record<string, string> = {
+  access_denied: "Sign-in was cancelled.",
+  invalid_request: "That sign-in link expired or was already used. Please try again.",
+  not_authorized: "That Google account isn't authorized for HR/Payroll access.",
+  login_failed: "Something went wrong signing you in. Please try again.",
+};
+
 function AdminApp() {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  const loginErrorReason = new URLSearchParams(window.location.search).get("login_error");
+  const loginError = loginErrorReason
+    ? (LOGIN_ERROR_MESSAGES[loginErrorReason] ?? "Something went wrong signing you in.")
+    : null;
   const [selected, setSelected] = useState<SubmissionDetail | null>(null);
   const [applicantsList, setApplicantsList] = useState<ApplicantAccountSummary[]>([]);
   const [selectedApplicant, setSelectedApplicant] = useState<ApplicantAccountDetail | null>(null);
 
   useEffect(() => {
     // TEMPORARY: skip the login screen entirely in local dev so /admin is
-    // reachable without signing in. Backend auth is also disabled right now
-    // (see server/src/auth.js) — remove both before this goes anywhere near
-    // production.
+    // reachable without a Google Workspace OAuth client configured. Remove
+    // before this goes anywhere near production.
     if (import.meta.env.DEV) {
       setAuthStatus("authenticated");
       return;
@@ -206,7 +217,10 @@ function AdminApp() {
 
     fetch(`${API_BASE_URL}/api/admin/session`, { credentials: "include" })
       .then((res) => res.json())
-      .then((data) => setAuthStatus(data.authenticated ? "authenticated" : "unauthenticated"))
+      .then((data) => {
+        setAuthStatus(data.authenticated ? "authenticated" : "unauthenticated");
+        setAdminEmail(data.email ?? null);
+      })
       .catch(() => setAuthStatus("unauthenticated"));
   }, []);
 
@@ -235,36 +249,10 @@ function AdminApp() {
     setSelectedApplicant(await res.json());
   }
 
-  async function handleLogin(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setIsLoggingIn(true);
-    setLoginError(null);
-
-    const formData = new FormData(event.currentTarget);
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/login`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: formData.get("username"),
-          password: formData.get("password"),
-        }),
-      });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        setLoginError(body?.error ?? "Invalid credentials.");
-        return;
-      }
-
-      setAuthStatus("authenticated");
-    } catch {
-      setLoginError("Couldn't reach the server. Please make sure it's running.");
-    } finally {
-      setIsLoggingIn(false);
-    }
+  function handleLogin() {
+    // Full-page navigation, not a fetch — this has to leave the app so the
+    // browser can carry the OAuth redirect dance with Google itself.
+    window.location.href = `${API_BASE_URL}/api/admin/login/google`;
   }
 
   async function handleLogout() {
@@ -273,6 +261,7 @@ function AdminApp() {
       credentials: "include",
     });
     setApplicantsList([]);
+    setAdminEmail(null);
     setAuthStatus("unauthenticated");
   }
 
@@ -316,32 +305,18 @@ function AdminApp() {
   if (authStatus === "unauthenticated") {
     return (
       <main className="app-shell">
-        <form className="form-card admin-login-card" onSubmit={handleLogin}>
+        <div className="form-card admin-login-card">
           <p className="eyebrow">ORCA Rehab</p>
           <h1>HR &amp; Payroll Login</h1>
-
-          <label className="form-field">
-            <span>Username</span>
-            <input type="text" name="username" autoComplete="username" required />
-          </label>
-
-          <label className="form-field">
-            <span>Password</span>
-            <input
-              type="password"
-              name="password"
-              autoComplete="current-password"
-              required
-            />
-          </label>
+          <p>Sign in with your company Google Workspace account.</p>
 
           {loginError && <p className="admin-error">{loginError}</p>}
 
-          <button className="primary-button" type="submit" disabled={isLoggingIn}>
-            {isLoggingIn ? "Signing in…" : "Sign in"}
+          <button className="primary-button" type="button" onClick={handleLogin}>
+            Continue with Google
             <span aria-hidden="true">→</span>
           </button>
-        </form>
+        </div>
       </main>
     );
   }
@@ -357,9 +332,12 @@ function AdminApp() {
               <h1>New Employee Onboarding</h1>
             </div>
           </div>
-          <button className="back-button" type="button" onClick={handleLogout}>
-            Sign out
-          </button>
+          <div className="admin-topbar-actions">
+            {adminEmail && <span className="admin-signed-in-as">Signed in as {adminEmail}</span>}
+            <button className="back-button" type="button" onClick={handleLogout}>
+              Sign out
+            </button>
+          </div>
         </header>
 
         {applicantsList.length === 0 ? (

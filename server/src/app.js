@@ -1,10 +1,12 @@
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
 const session = require("express-session");
 const db = require("./db");
 const { createSignedUpload, resolveUploadedFile, downloadFile, deleteFiles, signPath } = require("./storage");
-const { verifyLogin, requireAuth } = require("./auth");
+const { isAdminEmailAllowed, requireAuth } = require("./auth");
+const googleAuth = require("./googleAuth");
 const { notifyNewSubmission, sendPasswordResetEmail } = require("./mailer");
 const documentVerification = require("./documentVerification");
 const { buildCredentialingZip } = require("./credentialingPackage");
@@ -577,20 +579,53 @@ app.post("/api/onboarding/submit", requireApplicantAuth, async (req, res) => {
   res.json({ success: true, id: submissionId });
 });
 
-// --- Admin auth ---
+// --- Admin auth (Google Workspace SSO) ---
 
-app.post("/api/admin/login", async (req, res) => {
-  const { username, password } = req.body;
+function adminDashboardUrl() {
+  return process.env.ADMIN_DASHBOARD_URL || "http://localhost:5173/admin";
+}
+
+// Kicks off the OAuth redirect dance — the browser navigates here directly
+// (not a fetch), so this has to be a real 302 to Google, not a JSON response.
+app.get("/api/admin/login/google", (req, res) => {
+  // Rotates on every attempt and is checked again in the callback below, so
+  // a callback request that didn't originate from this exact login attempt
+  // (forged or replayed) is rejected before any session is granted.
+  const state = crypto.randomBytes(16).toString("hex");
+  req.session.oauthState = state;
 
   try {
-    const valid = await verifyLogin(username, password);
-    if (!valid) return res.status(401).json({ error: "Invalid credentials." });
+    res.redirect(googleAuth.buildAuthUrl(state));
+  } catch (error) {
+    console.error("Google OAuth is not configured:", error);
+    res.status(500).send("Google sign-in is not configured on this server.");
+  }
+});
+
+app.get("/api/admin/login/google/callback", async (req, res) => {
+  const { code, state, error: oauthError } = req.query;
+  const expectedState = req.session?.oauthState;
+  req.session.oauthState = null;
+
+  const failure = (reason) =>
+    res.redirect(`${adminDashboardUrl()}?login_error=${encodeURIComponent(reason)}`);
+
+  if (oauthError) return failure("access_denied");
+  if (!code || !state || state !== expectedState) return failure("invalid_request");
+
+  try {
+    const profile = await googleAuth.exchangeCodeForProfile(code);
+
+    if (!isAdminEmailAllowed(profile.email)) {
+      return failure("not_authorized");
+    }
 
     req.session.isAdmin = true;
-    res.json({ success: true });
+    req.session.adminEmail = profile.email;
+    res.redirect(adminDashboardUrl());
   } catch (error) {
-    console.error("Admin login error:", error);
-    res.status(500).json({ error: "Login is not configured correctly." });
+    console.error("Google admin login failed:", error);
+    failure("login_failed");
   }
 });
 
@@ -599,7 +634,8 @@ app.post("/api/admin/logout", (req, res) => {
 });
 
 app.get("/api/admin/session", (req, res) => {
-  res.json({ authenticated: Boolean(req.session?.isAdmin) });
+  if (!req.session?.isAdmin) return res.json({ authenticated: false });
+  res.json({ authenticated: true, email: req.session.adminEmail });
 });
 
 // --- Admin data ---

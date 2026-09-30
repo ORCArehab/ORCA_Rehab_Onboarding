@@ -78,11 +78,16 @@ Set these in `server/.env` too (see `.env.example` for the full list):
   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   ```
 - `SESSION_SECRET` — any long random string, for signing the admin login session.
-- `ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH` — a single shared HR/Payroll login. Generate the password hash with:
-  ```bash
-  node server/scripts/hash-password.js "your-password"
-  ```
-  Run this again any time you want to change the password, then paste the new hash into `.env`.
+
+### HR/Payroll admin login (Google Workspace SSO)
+
+HR/Payroll signs in with their company Google account — there's no separate username/password to create or rotate.
+
+1. Create an OAuth client at [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials) (type: **Web application**). On the OAuth consent screen, set the user type to **Internal** — this restricts sign-in to accounts in your Workspace org at the Google level, before this app's own checks ever run.
+2. Add an Authorized redirect URI of `{APP_URL}/api/admin/login/google/callback` — e.g. `http://localhost:5173/api/admin/login/google/callback` for local dev, or your production domain's equivalent.
+3. Copy the client ID and secret into `server/.env` as `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+4. Set `GOOGLE_WORKSPACE_DOMAIN` to your company's domain (e.g. `orcarehab.com`).
+5. Set `ADMIN_ALLOWED_EMAILS` to a comma-separated list of the specific people who should have access (e.g. `hr@orcarehab.com,payroll@orcarehab.com`). This dashboard holds SSNs and other PII, and an "Internal" consent screen admits your *whole* Workspace org — leaving this blank falls back to allowing anyone on `GOOGLE_WORKSPACE_DOMAIN`, which is broader than most companies want for this page.
 
 Optionally, fill in the `SMTP_*` and `NOTIFY_EMAIL_TO` variables to get an email notification whenever a new submission comes in. Leave them blank to skip notifications entirely (nothing breaks — it just logs a warning and moves on).
 
@@ -115,12 +120,13 @@ How it fits together:
 
 ### 1. Set environment variables
 
-In the Vercel project settings, add every variable from `server/.env` — Supabase credentials, `ENCRYPTION_KEY`, `SESSION_SECRET`, `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH` — with these differences:
+In the Vercel project settings, add every variable from `server/.env` — Supabase credentials, `ENCRYPTION_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_WORKSPACE_DOMAIN`/`ADMIN_ALLOWED_EMAILS` — with these differences:
 
 - `NODE_ENV=production` — makes the login cookie `Secure`.
 - `DATABASE_URL` — **must** be Supabase's pooled connection string (Project Settings → Database → **Connection pooling**, port `6543`), not the direct `:5432` one. Every function invocation opens its own connection and direct Postgres runs out of slots fast.
 - `FRONTEND_ORIGIN` — leave **unset**. Setting it turns on CORS and switches the cookie to `SameSite=None`, which you only want if you later split the frontend onto its own domain.
 - `VITE_API_URL` — leave **unset**. The frontend falls back to relative `/api` paths, which is exactly right when both halves share a domain.
+- `APP_URL` — set to your production domain (e.g. `https://onboarding.orcarehab.com`). It's used both for the applicant password-reset email link and to build the Google OAuth redirect URI, which must also be added as an Authorized redirect URI on the OAuth client in Google Cloud Console.
 
 Don't set `PORT`; Vercel manages that.
 

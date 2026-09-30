@@ -34,6 +34,17 @@
   margin-bottom: 30px;
 }
 
+.admin-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.admin-signed-in-as {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
 .admin-empty {
   color: var(--text-muted);
   font-size: 0.95rem;

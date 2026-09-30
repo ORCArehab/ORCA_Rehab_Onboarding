@@ -51,7 +51,6 @@ button {
     var(--cream);
 }
 
-.welcome-card,
 .form-card {
   width: min(100%, 980px);
   background: rgba(255, 255, 255, 0.92);
@@ -59,30 +58,6 @@ button {
   border-radius: 28px;
   box-shadow: var(--shadow);
   overflow: hidden;
-}
-
-.welcome-card {
-  min-height: 600px;
-  display: grid;
-  grid-template-columns: 1fr 1.15fr;
-}
-
-.welcome-logo {
-  width: 100%;
-  height: 100%;
-  min-height: 600px;
-  object-fit: contain;
-  padding: 64px;
-  background:
-    linear-gradient(rgba(var(--navy-rgb), 0.02), rgba(var(--navy-rgb), 0.02)),
-    #fbf8f1;
-}
-
-.welcome-content {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 72px;
 }
 
 .eyebrow {
@@ -99,11 +74,6 @@ h1 {
   color: var(--navy);
   font-size: clamp(2.4rem, 5vw, 4rem);
   line-height: 1.08;
-}
-
-h1 span {
-  display: block;
-  color: var(--navy);
 }
 
 .welcome-description {
@@ -157,12 +127,6 @@ input:focus-visible {
   font-size: 1.3rem;
 }
 
-.security-message {
-  margin: 22px 0 0;
-  color: #8992a3;
-  font-size: 0.82rem;
-}
-
 .form-card {
   position: relative;
   padding: 52px 64px 60px;
@@ -184,7 +148,7 @@ input:focus-visible {
 .page-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
 }
 
 .page-actions .back-button {
@@ -226,8 +190,10 @@ input:focus-visible {
 
 .form-header {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 30px;
+  text-align: center;
+  gap: 6px;
   margin-bottom: 38px;
 }
 
@@ -236,7 +202,7 @@ input:focus-visible {
   height: 110px;
   padding: 10px;
   object-fit: contain;
-  border-right: 1px solid var(--border);
+  margin-bottom: 14px;
 }
 
 .form-header h1,
@@ -246,7 +212,7 @@ input:focus-visible {
 
 .form-header p:not(.eyebrow) {
   max-width: 610px;
-  margin: 10px 0 0;
+  margin: 10px auto 0;
   color: var(--text-muted);
   line-height: 1.6;
 }
@@ -260,6 +226,10 @@ input:focus-visible {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+}
+
+.field-row-3 {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .section-header {
@@ -701,35 +671,13 @@ input:focus-visible {
 }
 
 @media (max-width: 780px) {
-  .welcome-card {
-    grid-template-columns: 1fr;
-  }
-
-  .welcome-logo {
-    min-height: 250px;
-    max-height: 300px;
-    padding: 32px;
-  }
-
-  .welcome-content {
-    padding: 44px 30px 50px;
-  }
-
   .form-card {
     padding: 38px 25px 42px;
-  }
-
-  .form-header {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .form-logo {
     width: 150px;
     height: auto;
-    padding: 0 0 20px;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
   }
 
   .field-row {
